@@ -4,26 +4,27 @@
 
 一个 DeepSeek Harness 的 web 插件。它不拦截、不代理任何模型调用——只是观察已经成功的 `edit` / `write` / `apply_patch` 结果，把「这一次调用改了什么」独立记成一条，然后在聊天流里就地渲染。
 
-```
-● Edited slot_rotator.h                        +54  −55   [Undo]
-  ┌──────────────────────────────────────────────────────────┐
-  │  41   41    double dt = now - last_;                     │
-  │  42   42    if (dt < min_gap_) return;                   │
-  │  43        - rate_ = ticks_ / dt;                        │
-  │       43   + rate_ = ticks_ * 1e6 / max(dt, kFloorUs);    │
-  └──────────────────────────────────────────────────────────┘
+默认收起，只留一行摘要；点 `>` 才展开这一处的 diff，点 `+A −R` 直接在右侧审阅面板里定位到它：
 
-  ◧ 3 files changed · 5 edits        +716  −302   [Review] [Keep] [Undo all]
-```
+![行内 diff 与审阅面板](docs/screenshots/overview.png)
+
+点开第一条的三角，就是这一处改动的完整补丁（双侧行号、`@@` 块头、增删底色）：
+
+![展开后的 diff](docs/screenshots/expanded.png)
+
+> 截图由 `tools/preview.mjs` 用本插件真实的组件 + 合成数据渲染出来（`node tools/preview.mjs > docs/preview.html`，浏览器直接打开即可交互），不包含任何真实会话内容。
 
 ## 功能
 
 | 能力 | 说明 |
 | --- | --- |
 | 每次修改自动追踪 | 观察 `edit` / `write` / `apply_patch`，一次调用 = 一条独立记录（`apply_patch` 改多个文件时按文件各记一条） |
-| 行内 diff | 每条记录在聊天流里就地显示统一 diff：双侧行号、`@@` 块头、增删底色；超过 12 行折叠为「Show N more lines」 |
+| 行内 diff | 展开后就是完整统一 diff：双侧行号、`@@` 块头、增删底色；超过 12 行折叠为「Show N more lines」 |
 | 增删统计 | 动作行右侧常驻 `+A −R`，与 Copilot 的动作行一致 |
-| 轮末汇总条 | `N files changed · M edits  +X −Y`，带 **Review / Keep / Undo all** |
+| 默认收起 | 每条记录只占一行摘要，不会把聊天流撑成一片 diff；点行首 `>` 展开 |
+| 点开审阅 | 点 `+A −R` 打开右侧审阅面板，并滚动定位到这一次修改 |
+| 会话列表统计 | 侧边栏每个会话行下方显示该会话累计的 `+A −R` |
+| 轮末汇总条 | `N files changed · M edits  +X −Y`，带 **Review / Keep / Undo all**；收起过程后它仍然在 |
 | 单次撤销 | 每条记录自己的 Undo：只把这一次编辑替换掉的文本写回，不影响同文件的其他编辑 |
 | 冲突保护 | 只有当磁盘内容仍等于该次编辑的 `after` 时才写回；否则拒绝，并提示先撤销更新的那次——绝不吞掉后来的改动 |
 | 会话累计 | 记录按 session 持久化，重开页面/重连后仍在；Review 面板列出整轮的全部编辑 |
@@ -87,10 +88,11 @@ dsh web
 
 ## 使用
 
-- **看**：每条改文件的动作行右侧就是 `+A −R`，下方是这一次的 diff。点文件名在编辑器打开该文件，点「Show N more lines」展开完整补丁。
+- **看**：每条改文件的动作行右侧就是 `+A −R`，行首的 `>` 展开这一次的 diff。点文件名在编辑器打开该文件，点「Show N more lines」展开完整补丁。
+- **审阅**：点 `+A −R`，右侧边栏打开审阅面板并按调用分组列出本次会话的全部改动，定位到你点的那一条；面板里可以逐条撤销，也可以保留/回滚全部。
 - **撤销一条**：动作行右侧的 `Undo`。它把这次编辑替换掉的原文写回；如果这之后磁盘又被改过（无论谁改的），它会拒绝并说明原因。
 - **保留**：轮末汇总条的 `Keep` 把整轮标记为已看过（不写文件，只是把记录标记为 `kept`，从待审查里移出）。`Keep` 旁边是 `Undo all`，按逆序回滚整轮，跳过有冲突的记录，并在需要时报告哪些没撤成。
-- **Review**：展开轮末面板，逐条看每一轮的编辑、单独撤销其中某一条。
+- **Review**：轮末汇总条的 `Review` 按钮同样打开审阅面板（不指定定位）。
 
 ## 通道与存储
 
@@ -99,6 +101,7 @@ dsh web
 | endpoint | 载荷 | 返回 |
 | --- | --- | --- |
 | `list` | `{ sessionId }` | `{ revision, totals, records[] }`（不含 diff 正文） |
+| `summaries` | `{ sessionIds[] }` | `{ sums: { [sessionId]: totals } }`，只含改过文件的会话，供侧边栏徽标批量取数 |
 | `detail` | `{ sessionId, callId }` | `{ records[] }`（含 hunks） |
 | `keep` | `{ sessionId, id? }` | `{ changed, ...summary }` |
 | `keep-all` | `{ sessionId }` | `{ changed, ...summary }` |
@@ -119,10 +122,11 @@ dsh web
 - 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.1`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
+- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.2`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
 
 ## 变更记录
 
+- `0.1.2` — 改成 Copilot 的读法：动作行默认收起，点 `>` 才展开 diff；`+A −R` 变成按钮，点开右侧审阅面板并定位到这次修改；轮末汇总条在收起过程后仍然可见；侧边栏会话行新增该会话累计的 `+A −R` 徽标（新增 `summaries` 批量端点，5 秒一轮，只查可见会话）。顺带修了两个只在真实 locale 下才炸的问题：把回退文案当插值参数传给 `t()`（模板含 `{}` 时 `name in params` 抛错），以及窄面板里按钮文字被挤成竖排。
 - `0.1.1` — 修复无法激活：`inject` 漏了 `connection.register` 内部实际依赖的 `webServer`（启动摘要显示 `cannot get property "webServer" without inject`）。测试补了一条守卫，要求声明的服务覆盖真正用到的服务，这类问题从此是测试失败而不是装完静默消失。
 - `0.1.0` — 首个版本。
 
@@ -135,7 +139,8 @@ npm test          # 22 个用例：diff 引擎 / 服务端记录与撤销 / 客�
 ```
 
 - `lib/index.js` — 服务端：diff 引擎、每 session 的 `EditLog`、`/live-diff` 通道。
-- `lib/client.js` — 客户端：`tool.call.toolview`（`edit`/`write`/`apply_patch` 三个 key）+ `conversation.chat.turnTail` 两条视图，手写 bundle，无构建步骤。
+- `lib/client.js` — 客户端：`tool.call.toolview`（`edit`/`write`/`apply_patch` 三个 key）、`conversation.chat.turnTail`、`sidebar.right.pane.tab`（`+ .title`）、`sidebar.workspaces.session.row.action` 与 `sidebar.session.row.hover`，手写 bundle，无构建步骤。
+- `tools/preview.mjs` — 把 `lib/client.js` 装进一个迷你的 hook 渲染器，用合成数据渲染出 `docs/preview.html`；`docs/screenshots/*.png` 就是它的截图。
 - `test/` — `node --test`。
 
 ## License

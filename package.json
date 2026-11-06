@@ -1,60 +1,60 @@
 {
-  "name": "dsh-live-diff",
-  "version": "0.1.1",
-  "description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: +A/-R on each edit row, a per-turn summary bar with Keep and Undo, and one-click undo for a single edit.",
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "diff",
-    "review",
-    "undo",
-    "copilot"
-  ],
-  "license": "MIT",
-  "author": "huieric",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/huieric/dsh-live-diff.git"
-  },
-  "homepage": "https://github.com/huieric/dsh-live-diff#readme",
-  "bugs": {
-    "url": "https://github.com/huieric/dsh-live-diff/issues"
-  },
-  "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": {
-      "default": "./lib/index.js"
-    },
-    "./client": {
-      "default": "./lib/client.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "lib/index.js",
-    "lib/client.js",
-    "cordis.patch.yml",
-    "README.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "test": "node --test test/*.test.js test/*.test.mjs"
-  },
-  "engines": {
-    "node": ">=20.11"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-locale"
-      ],
-      "platform": "web"
-    }
-  }
+	"name": "dsh-live-diff",
+	"version": "0.1.2",
+	"description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: +A/-R on each edit row, a per-turn summary bar with Keep and Undo, and one-click undo for a single edit.",
+	"keywords": [
+		"dsh",
+		"dsh-plugin",
+		"diff",
+		"review",
+		"undo",
+		"copilot"
+	],
+	"license": "MIT",
+	"author": "huieric",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/huieric/dsh-live-diff.git"
+	},
+	"homepage": "https://github.com/huieric/dsh-live-diff#readme",
+	"bugs": {
+		"url": "https://github.com/huieric/dsh-live-diff/issues"
+	},
+	"type": "module",
+	"main": "lib/index.js",
+	"exports": {
+		".": {
+			"default": "./lib/index.js"
+		},
+		"./client": {
+			"default": "./lib/client.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"lib/index.js",
+		"lib/client.js",
+		"cordis.patch.yml",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"test": "node --test test/*.test.js test/*.test.mjs"
+	},
+	"engines": {
+		"node": ">=20.11"
+	},
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		},
+		"client": {
+			"inject": [
+				"@deepseek-ai/dsh-client-runtime",
+				"@deepseek-ai/dsh-client-connection",
+				"@deepseek-ai/dsh-client-locale"
+			],
+			"platform": "web"
+		}
+	}
 }

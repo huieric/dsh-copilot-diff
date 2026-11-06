@@ -51,6 +51,26 @@ function textOf(node) {
 	return textOf(node.props?.children);
 }
 
+/**
+ * Depth-first search for the first element whose class list contains `name`.
+ * @param node - rendered tree.
+ * @param name - class name.
+ * @returns the element, or undefined.
+ */
+function findButton(node, name) {
+	if (node === null || node === undefined || typeof node !== "object") return undefined;
+	if (Array.isArray(node)) {
+		for (const child of node) {
+			const found = findButton(child, name);
+			if (found !== undefined) return found;
+		}
+		return undefined;
+	}
+	const classes = String(node.props?.className ?? "").split(/\s+/);
+	if (classes.includes(name)) return node;
+	return findButton(node.props?.children, name);
+}
+
 /** One stored record shaped like the server's. */
 const record = {
 	id: "e1",
@@ -78,36 +98,28 @@ const record = {
 	]
 };
 
-test("the bundle registers one module and exports apply + inject", () => {
-	const definition = loadBundle();
-	assert.equal(definition.id, "dsh-live-diff");
-	const exported = definition.factory((id) => {
-		if (id === "react") return react;
-		throw new Error(`unexpected require(${JSON.stringify(id)})`);
-	});
-	assert.equal(typeof exported.apply, "function");
-	assert.ok(Array.isArray(exported.inject));
-});
-
-test("apply wires three tool rows, the turn bar, dictionaries and styles", async () => {
-	const definition = loadBundle();
-	const exported = definition.factory(() => react);
-
+/**
+ * A fake service container that answers per service name, so a bundle asking
+ * for sidebarRight / sidebarRightTabs gets something that looks like them.
+ * @param options - `{ totals }` returned by the review channel.
+ * @returns `{ ctx, registrations, dictionaries, styles, tabTypes, openedTabs }`.
+ */
+function makeClientCtx(options = {}) {
 	const registrations = [];
 	const dictionaries = {};
 	const styles = [];
-	const host = {
-		document: undefined
-	};
-	globalThis.document = {
-		head: { appendChild: (tag) => styles.push(tag) },
-		querySelector: () => null,
-		createElement: () => ({ dataset: {}, textContent: "" })
-	};
+	const tabTypes = [];
+	const openedTabs = [];
+	const totals = options.totals ?? { edits: 0 };
 	const ctx = {
-		get: () => ({ rpc: { call: async () => ({ ok: true, value: { totals: { edits: 0 } } }) } }),
+		get: (name) => {
+			if (name === "connection") return { rpc: { call: async () => ({ ok: true, value: { totals, records: [] } }) } };
+			if (name === "sidebarRight") return { openTab: (kind, opts) => void openedTabs.push({ kind, opts }) };
+			if (name === "sidebarRightTabs") return { register: (spec) => void tabTypes.push(spec) };
+			return undefined;
+		},
 		effect: (fn) => fn(),
-		locale: { register: (namespace, dicts) => void (dictionaries[namespace] = dicts) },
+		locale: { register: (namespace, dicts) => void (dictionaries[namespace] = dicts), bind: () => (key) => key },
 		slots: {
 			register: (spec, component) => {
 				registrations.push({ spec, component });
@@ -121,48 +133,77 @@ test("apply wires three tool rows, the turn bar, dictionaries and styles", async
 			}
 		}
 	};
+	return { ctx, registrations, dictionaries, styles, tabTypes, openedTabs };
+}
 
+test("the bundle registers one module and exports apply + inject", () => {
+	const definition = loadBundle();
+	assert.equal(definition.id, "dsh-live-diff");
+	const exported = definition.factory((id) => {
+		if (id === "react") return react;
+		throw new Error(`unexpected require(${JSON.stringify(id)})`);
+	});
+	assert.equal(typeof exported.apply, "function");
+	assert.ok(Array.isArray(exported.inject));
+});
+
+test("apply wires rows, the turn bar, the review panel, session badges and styles", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+
+	const { ctx, registrations, dictionaries, tabTypes } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: (tag) => void tag },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
 	await exported.apply(ctx);
 	delete globalThis.document;
-	void host;
 
 	const rows = registrations.filter((entry) => entry.slot === "tool.call.toolview");
 	assert.deepEqual(
 		rows.map((entry) => entry.spec.key),
 		["edit", "write", "apply_patch"]
 	);
-	for (const entry of rows) assert.equal(entry.spec.name, "tool.call.toolview");
+	for (const entry of rows) {
+		assert.equal(entry.spec.name, "tool.call.toolview");
+		assert.equal(typeof entry.spec.inject, "function");
+		assert.equal(entry.spec.inject("s-1").liveDiffSessionId, "s-1");
+	}
 
 	const bar = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
 	assert.equal(bar.length, 1);
 	assert.equal(bar[0].spec.id, "dsh-live-diff");
 
+	assert.equal(tabTypes.length, 1);
+	assert.equal(tabTypes[0].kind, "live-diff");
+	assert.equal(tabTypes[0].id, "dsh-live-diff");
+
+	const pane = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab");
+	assert.equal(pane.length, 1);
+	assert.equal(pane[0].spec.key, "dsh-live-diff");
+	const paneTitle = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab.title");
+	assert.equal(paneTitle.length, 1);
+
+	const badge = registrations.filter((entry) => entry.slot === "sidebar.workspaces.session.row.action");
+	assert.equal(badge.length, 1);
+	assert.equal(badge[0].spec.id, "dsh-live-diff");
+	const hover = registrations.filter((entry) => entry.slot === "sidebar.session.row.hover");
+	assert.equal(hover.length, 1);
+
 	assert.ok(dictionaries["live-diff"]?.zh?.["bar.files"], "zh dictionary registered");
-	assert.ok(dictionaries["live-diff"]?.en?.["bar.files"], "en dictionary registered");
-	assert.equal(styles.length, 1, "stylesheet injected once");
-	assert.ok(styles[0].textContent.includes(".ld-diff"), "stylesheet carries the diff rules");
+	assert.ok(dictionaries["live-diff"]?.en?.["panel.title"], "en dictionary registered");
+	assert.ok(exported.inject.includes("sidebarRightTabs"));
 });
 
-test("the edit row and the turn bar render without throwing", async () => {
+test("the edit row is collapsed until asked, and its badge opens the review panel", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
-	const registrations = [];
+	const { ctx, registrations, openedTabs } = makeClientCtx();
 	globalThis.document = {
 		head: { appendChild: () => {} },
 		querySelector: () => null,
 		createElement: () => ({ dataset: {}, textContent: "" })
-	};
-	const ctx = {
-		get: () => ({ rpc: { call: async () => ({ ok: true, value: {} }) } }),
-		effect: (fn) => fn(),
-		locale: { register: () => {} },
-		slots: {
-			register: (spec, component) => {
-				registrations.push({ spec, component });
-				return () => {};
-			},
-			inject: (slot, factory) => factory()
-		}
 	};
 	await exported.apply(ctx);
 	delete globalThis.document;
@@ -170,15 +211,27 @@ test("the edit row and the turn bar render without throwing", async () => {
 	const Row = registrations.find((entry) => entry.spec.key === "edit").component;
 	const t = (key, fallback) => fallback ?? key;
 
-	queue = [0, { loaded: true, records: [record], error: null }, null, false];
-	const row = Row({ phase: "result", block: { callId: "c1" }, callId: "c1", liveDiffSessionId: "s1", cwd: "/work", home: "/home/u", openFile: () => {}, t });
-	const rowText = textOf(row);
-	assert.match(rowText, /was here/, "removed line rendered");
-	assert.match(rowText, /now here/, "added line rendered");
-	assert.match(rowText, /\+1/);
-	assert.match(rowText, /−1/);
-	assert.match(rowText, /Edited/);
-	assert.match(rowText, /Undo/);
+	queue = [0, { loaded: true, records: [record], error: null }, null, false, false];
+	const collapsed = Row({ phase: "result", block: { callId: "c1" }, callId: "c1", liveDiffSessionId: "s1", cwd: "/work", home: "/home/u", openFile: () => {}, t });
+	const collapsedText = textOf(collapsed);
+	assert.doesNotMatch(collapsedText, /was here/, "a collapsed row hides its diff");
+	assert.doesNotMatch(collapsedText, /now here/, "a collapsed row hides its diff");
+	assert.match(collapsedText, /\+1/, "the collapsed row still shows the stats");
+	assert.match(collapsedText, /−1/);
+	assert.match(collapsedText, /Edited/);
+	assert.match(collapsedText, /Undo/);
+	assert.ok(findButton(collapsed, "ld-toggle"), "a chevron toggles the diff");
+
+	queue = [0, { loaded: true, records: [record], error: null }, null, false, true];
+	const expanded = Row({ phase: "result", block: { callId: "c1" }, callId: "c1", liveDiffSessionId: "s1", cwd: "/work", home: "/home/u", openFile: () => {}, t });
+	const expandedText = textOf(expanded);
+	assert.match(expandedText, /was here/, "an expanded row shows the removed line");
+	assert.match(expandedText, /now here/, "an expanded row shows the added line");
+
+	const badge = findButton(collapsed, "ld-badge");
+	badge.props.onClick();
+	assert.equal(openedTabs.length, 1, "the stats button opens the review panel");
+	assert.equal(openedTabs[0].kind, "live-diff");
 
 	queue = [0, { revision: 3, totals: { edits: 2, files: 1, open: 2, openFiles: 1, added: 5, removed: 2 }, records: [record] }, false, false, null];
 	const Bar = registrations.find((entry) => entry.spec.name === "conversation.chat.turnTail").component;
@@ -201,7 +254,7 @@ test("the pending phase renders a placeholder row", async () => {
 		createElement: () => ({ dataset: {}, textContent: "" })
 	};
 	const ctx = {
-		get: () => ({ rpc: { call: async () => ({ ok: true, value: {} }) } }),
+		get: (name) => (name === "connection" ? { rpc: { call: async () => ({ ok: true, value: {} }) } } : undefined),
 		effect: (fn) => fn(),
 		locale: { register: () => {} },
 		slots: {
@@ -217,7 +270,7 @@ test("the pending phase renders a placeholder row", async () => {
 
 	const Row = registrations.find((entry) => entry.spec.key === "write").component;
 	const t = (key, fallback) => fallback ?? key;
-	queue = [0, { loaded: false, records: [], error: null }, null, false];
+	queue = [0, { loaded: false, records: [], error: null }, null, false, false];
 	const row = Row({ phase: "start", block: { args: { path: "/work/src/b.js" } }, liveDiffSessionId: "s1", cwd: "/work", openFile: () => {}, t });
 	assert.match(textOf(row), /Editing/);
 	assert.match(textOf(row), /b\.js/);
