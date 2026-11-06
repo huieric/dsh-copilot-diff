@@ -97,6 +97,24 @@ dsh web
 ./scripts/install-local.sh --remove # 卸载
 ```
 
+### 本地开发版安装与验证
+
+在本次开发目录执行 `./scripts/install-local.sh web` 可复制安装到现有 Web profile；宿主与浏览器需要重新加载插件。服务端实现改变后需重启 DSH，新客户端 bundle 需刷新页面。本仓库是零构建插件，无需重编译 DSH 主程序。请在完成其它会话任务后重启，避免中断运行中的会话。
+
+测试入口：
+
+```bash
+npm test
+mkdir -p output/playwright
+node tools/preview.mjs > output/playwright/preview.html
+# 下列脚本可连接已存在的 Chromium，不会启动另一个 DSH 服务
+CDP_URL=http://127.0.0.1:9333 PLAYWRIGHT_CORE=/path/to/playwright-core/index.mjs node tools/browser-smoke.mjs
+# 可选：以已安装的 DSH 文件服务验证恢复/CAS
+DSH_INSTALL=/path/to/node_modules/@deepseek-ai/dsh node tools/host-fs-smoke.mjs
+```
+
+浏览器 fixture 使用合成数据，不能替代认证后的真实会话验证。部分旧版 Landlock 沙箱会阻止宿主原子写入使用的跨目录 rename 并返回 `EXDEV`；遇到此错误会报告实际失败，不会退回绕过宿主策略的直接写盘。真实文件服务 smoke 若遇到该限制，不应标为恢复通过。
+
 ## 和 Copilot 对齐的三处
 
 | 位置 | 长什么样 | 点它 |
@@ -130,6 +148,17 @@ node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
 
 补出来的记录 `state` 是 `kept`：它们是历史，按钮只给「已保留」，不给撤销——旧会话的磁盘内容早就和当时不同了。跑完请重启 `dsh web`，因为运行中的 host 内存里还留着旧副本。
 
+## 检查点覆盖与恢复语义
+
+- **Undo** 撤销选中记录／所选轮次的待审阅改动；**Restore Checkpoint** 恢复到选中轮开始前，会包含之后轮次的已记录改动，因此有单独确认。
+- 开始一轮时建立快照，首个工具执行前等待快照完成；工具结束与轮结束后刷新实际磁盘内容。命令即使失败，只要在失败前写过文件，也能从最终文件状态识别。
+- 快照只保存有界 UTF-8 文本，不追踪符号链接、二进制、非 UTF-8 或超限文件。默认单文件最多 512 KiB、一次最多 1,000 个文件／8 MiB 文本、5,000 个目录项、深度 12；会话历史约 64 MiB 后停止新增可恢复快照。达到限制会显示 Limited capture／捕获范围，恢复只涉及可靠捕获的变更。
+- 普通项目目录递归扫描，包含脏文件、未跟踪文件与嵌套仓库；工作区是用户主目录或文件系统根时，只扫描直接文件与直接子 git 仓库，避免无界遍历。建议把会话工作区设为具体代码项目，以取得稳定覆盖。
+- 排除 `.git`、依赖／构建输出、缓存、`.env*`、DSH 与常见凭据存储。未被快照覆盖的文件工具记录仍可展示；没有可靠原文的记录不可恢复。
+- 恢复前检查所有目标内容及路径；有外部改动、目录替换为符号链接、权限或沙箱拒绝时显示原因。写入使用宿主文件服务和版本守卫，保留当前 session 的写入策略；运行中的轮次不能恢复。
+- 文件恢复不修改 git index／refs，也不删除聊天记录。不恢复远端 SSH 执行环境。检查点不是磁盘备份，不承诺恢复文件权限、二进制或被排除路径。
+- 旧会话没有轮前快照时，历史 git／日志只能提供只读展示，Restore Checkpoint 显示不可用；刷新或升级无法补造原本不存在的原文。
+
 ## 通道与存储
 
 服务端注册连接通道 `/copilot-diff`（`authority: trusted-host`），客户端只在**本地**通过它读数据：
@@ -143,9 +172,13 @@ node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
 | `keep-all` | `{ sessionId }` | `{ changed, ...summary }` |
 | `revert` | `{ sessionId, id }` | summary，或 `error.code = "conflict"` |
 | `revert-all` | `{ sessionId }` | `{ reverted, failures[], ...summary }` |
-| `clear` | `{ sessionId }` | summary |
+| `clear` | `{ sessionId }` | summary（清空旧逐调用记录，不删除检查点） |
+| `checkpoints` | `{ sessionId }` | `{ checkpoints[] }`，含 turn／状态／覆盖限制 |
+| `review-turn` | `{ sessionId, turn }` | 该轮完整 records／hunks、totals、root |
+| `restore-checkpoint` | `{ sessionId, turn }` | 恢复至该轮开始前；返回 restored／failures／summary，冲突返回 error |
+| `keep-turn` / `revert-turn` | `{ sessionId, turn }` | 保留／撤销所选轮次（兼容旧 from／to 时间窗） |
 
-记录落盘在 `${DSH_HOME:-~/.dsh}/copilot-diff/sessions/<session>.json`，每 session 最多保留 400 条（超出丢最旧的）。**文件正文会写进这个文件**（撤销要靠它），只是本地数据，不会发到网络。
+逐调用记录落盘在 `${DSH_HOME:-~/.dsh}/copilot-diff/sessions/<session>.json`，每 session 最多保留 400 条。逐轮快照另存于同一根下的 `checkpoints/`，以 session id 哈希命名。**文件正文会保存在本地 JSON 中**，恢复依赖这些原文；不发送到模型或外网。Keep 不删除快照；移除插件也不会自动删除检查点数据。
 
 ## 实现要点
 
