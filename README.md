@@ -1,8 +1,12 @@
 # dsh-copilot-diff
 
-> Copilot 风格的行内 diff：DSH 里每一次改文件都当场显示 `+A −R`，点开就是差异内容；右侧审阅面板按时间顺序列出整轮每个文件（默认展开 diff），带 **Keep** 与 **Undo**。
+> Copilot 风格的代码审阅：轮末文件列表、点击打开右侧 diff、统一／左右对比、Keep／Undo，以及每轮开始前的 **Restore Checkpoint**。
 
-一个 DeepSeek Harness 的 web 插件。它不拦截、不代理任何模型调用——只是观察已经成功的 `edit` / `write` / `apply_patch` 结果，把「这一次调用改了什么」独立记成一条，然后在聊天流里就地渲染。
+一个 DeepSeek Harness Web 插件。文件工具保留逐调用 diff；新的逐轮工作区快照按磁盘实际变化识别 `sed`、Python `replace`、脚本及其它命令行修改，提供轮级净改动和持久化检查点。它不调用模型。快照范围和排除项会显示在检查点处；超出覆盖范围的文件不会假装可以恢复。
+
+**0.2.0 新交互**：点击轮末任意文件或增删数字，在右侧打开该轮的审阅视图并选中该文件；可切换统一 diff／左右对比，使用文件选择与上一个／下一个导航。轮次标题前提供 Restore Checkpoint，确认后恢复文件至该轮开始前，包含之后轮次的已记录修改；聊天记录保留。Keep 只表示审阅完成，不删除检查点。旧轮次没有可靠快照时显示不可用。
+
+下方三张截图为早期版本的合成组件示例；当前界面可用 `tools/preview.mjs` 重新生成验证。
 
 默认收起，只留一行摘要；点 `>` 才展开这一处的 diff，点 `+A −R` 直接在右侧审阅面板里定位到它。这一轮的 `+A −R` 就长在助手那句「已完成，用时 11分59秒」后面（替换宿主的 turn-process 行），点数字同样打开右侧审阅面板；每轮末尾再补一行 `N 个文件已修改 +A −R` 与 **保留 / 撤销**：
 
@@ -99,7 +103,7 @@ dsh web
 | --- | --- | --- |
 | 轮次头 | `已完成，用时 29分36秒  +158 −55` | 数字 → 右侧审阅面板（并定位到这轮第一条改动） |
 | 轮次内 | 每改一个文件一行：`已编辑 src/rotator/slot_rotator.h  +54 −55` | 行 → 面板里定位到这次改动的 diff |
-| 轮末 | `4 个文件已修改  +328 −62` ＋ 逐文件 `+/−` 列表 ＋ **保留 / 撤销** | 文件名 → 直接打开该文件 |
+| 轮末 | `4 个文件已修改  +328 −62` ＋ 逐文件 `+/−` 列表 ＋ **保留 / 撤销** | 文件名 → 右侧审阅该轮该文件的 diff |
 
 三处都只在这一轮确实改过文件时出现。
 
@@ -151,7 +155,7 @@ node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
 
 ## 已知限制
 
-- shell 命令改的文件由宿主 `workspace/changes` 快照补上，需要该轮跑完（`turn/end`）才出现；这类记录只读，不能单条撤销。
+- 0.2.0 起，新轮次的 shell 改动来自插件自己的有界全文快照，可查看并恢复；工具完成后与轮末会刷新。宿主 `workspace/changes` 和历史 git 回填仍是无可靠全文时的只读兜底。
 - 已经跑完的旧轮次：宿主的内存快照已丢，只能用 git 提交回溯（`tools/backfill.mjs` 默认开启，或用 `--no-git` 关掉）。所以「没有提交、又不在 git 仓库里」的 shell 改动无法还原。
 
 ### 补全历史轮次
@@ -166,13 +170,15 @@ node tools/backfill.mjs --dry
 跑完重启 `dsh web`。git 回溯只扫会话工作目录下第一层的仓库（跳过 node_modules/thirdparty 这类目录），所以 `~/某仓库/...` 里的改动能被补上，`/tmp` 里的临时脚本补不上。
 
 
-- 覆盖 `edit` / `write` / `apply_patch`，以及 `replace_string_in_file` / `multi_replace_string_in_file` / `edit_file` / `multi_edit` / `create_file` / `write_to_file`；还认 `str_replace_editor`。shell 里的 `sed`/`cat >` 不追踪。
+- 文件工具逐调用记录与逐轮快照互补。间接 shell 修改只覆盖快照范围内的本地文件；通过 SSH、容器或远程挂载工具修改的另一个执行环境不保证捕获。不会只根据命令文字猜测被改的文件。
 - 历史回填依赖会话日志里能拿到前后文本：`apply_patch` 只写补丁、`dshFileReview` 元数据又缺失时，这条调用补不出来。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 已发布到 npm：`npm i dsh-copilot-diff`（当前 `0.1.7`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
+- 本分支为 `0.2.0` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
 
 ## 变更记录
+
+- `0.2.0`（本分支）— 持久化逐轮检查点与 shell 实际修改追踪；Restore Checkpoint 回到选中轮开始前；点击文件打开按轮定位的侧栏；完整 diff 加载、统一／左右对比与文件导航；净改动统计、迟到记录刷新和部分失败提示。大文件、非 UTF-8、符号链接及扫描限制明确排除，历史无快照的轮次不提供虚假恢复。
 
 - `0.1.13` — 历史轮次也能有 diff：会话加载（或 `tools/backfill.mjs`）时，如果一轮没有任何工具记录，就用该轮时间窗内的 git 提交重建逐文件 diff（来源标为 git，只读）。这样「用 bash/python 改的文件」的老轮次也能看到数字。
 - `0.1.12` — 用宿主每轮的 `workspace/changes` 快照补课：shell 命令（python/`sed`/脚本）改的文件以前完全看不到，现在出现在同一轮的逐文件列表里（来源标为 workspace，只读不可撤销）；已有工具级记录的文件不重复计入。
@@ -199,7 +205,7 @@ node tools/backfill.mjs --dry
 ```bash
 git clone https://github.com/huieric/dsh-copilot-diff.git
 cd dsh-copilot-diff
-npm test          # 22 个用例：diff 引擎 / 服务端记录与撤销 / 客户端渲染与注册
+npm test          # diff 引擎、真实文件快照/恢复、服务端、客户端与历史回填
 ```
 
 - `lib/index.js` — 服务端：diff 引擎、每 session 的 `EditLog`、`/copilot-diff` 通道。

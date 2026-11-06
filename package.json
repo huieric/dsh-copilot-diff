@@ -1,7 +1,7 @@
 {
   "name": "dsh-copilot-diff",
-  "version": "0.1.13",
-  "description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: a collapsed row per edit with +A/-R, a turn footer with steps, duration and Keep/Undo, and a review panel that lists every changed file.",
+  "version": "0.2.0",
+  "description": "Copilot-style file review for DeepSeek Harness: scoped sidebar diffs, shell mutation tracking, Keep/Undo and persistent per-turn Restore Checkpoint.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -36,6 +36,7 @@
     "lib/client.js",
     "lib/diff.js",
     "lib/history.js",
+    "lib/checkpoints.js",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
