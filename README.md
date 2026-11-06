@@ -113,7 +113,7 @@ CDP_URL=http://127.0.0.1:9333 PLAYWRIGHT_CORE=/path/to/playwright-core/index.mjs
 DSH_INSTALL=/path/to/node_modules/@deepseek-ai/dsh node tools/host-fs-smoke.mjs
 ```
 
-浏览器 fixture 使用合成数据，不能替代认证后的真实会话验证。部分旧版 Landlock 沙箱会阻止宿主原子写入使用的跨目录 rename 并返回 `EXDEV`；遇到此错误会报告实际失败，不会退回绕过宿主策略的直接写盘。真实文件服务 smoke 若遇到该限制，不应标为恢复通过。
+浏览器 fixture 使用合成数据，不能替代认证后的真实会话验证。本机工具沙箱内测到跨目录 rename 返回 `EXDEV`，即使源和目标在同一 ext4 文件系统；同目录 rename 成功，具体原因尚未确定。宿主原子写入使用临时子目录，也遇到此限制。遇到该错误会报告实际失败，不会退回绕过宿主策略的直接写盘。真实文件服务 smoke 若遇到该限制，不应标为恢复通过。
 
 ## 和 Copilot 对齐的三处
 
