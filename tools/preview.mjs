@@ -327,7 +327,27 @@ function buildPage(bundleCss) {
 	var rows = [
 		createElement(Row, { phase: "result", block: { callId: "c1" }, callId: "c1", liveDiffSessionId: "s1", cwd: common.cwd, home: common.home, openFile: common.openFile, t: t }),
 		createElement(Row, { phase: "result", block: { callId: "c2" }, callId: "c2", liveDiffSessionId: "s1", cwd: common.cwd, home: common.home, openFile: common.openFile, t: t }),
-		createElement(Row, { phase: "result", block: { callId: "c3", args: { path: "/work/product/config/feeds.toml" } }, callId: "c3", liveDiffSessionId: "s1", cwd: common.cwd, home: common.home, openFile: common.openFile, t: t })
+		createElement(Row, { phase: "result", block: { callId: "c3", args: { path: "/work/product/config/feeds.toml" } }, callId: "c3", liveDiffSessionId: "s1", cwd: common.cwd, home: common.home, openFile: common.openFile, t: t }),
+		// No server record for this one: the row builds its diff from the arguments,
+		// which is what an imported transcript or a bypassing tool looks like.
+		createElement(Row, {
+			phase: "result",
+			toolName: "replace_string_in_file",
+			block: {
+				callId: "c4",
+				args: {
+					filePath: "/work/product/src/rotator.h",
+					oldString: "  int slots = 4;\n  bool rotate = false;\n  double epsilon = 1e-6;\n",
+					newString: "  int slots = 8;\n  bool rotate = true;\n  double epsilon = 1e-9;\n"
+				}
+			},
+			callId: "c4",
+			liveDiffSessionId: "s1",
+			cwd: common.cwd,
+			home: common.home,
+			openFile: common.openFile,
+			t: t
+		})
 	];
 
 	var tree = createElement("div", { className: "pv-app" },
@@ -379,8 +399,10 @@ function boot() {
 	buildPage(css);
 	if (location.search.indexOf("expand") >= 0) {
 		setTimeout(function () {
-			var toggle = document.querySelector(".ld-toggle");
-			if (toggle) toggle.click();
+			var match = /expand=(\\d+)/.exec(location.search);
+			var index = match === null ? 0 : Number(match[1]) - 1;
+			var toggles = document.querySelectorAll(".ld-toggle");
+			if (toggles[index]) toggles[index].click();
 		}, 400);
 	}
 }

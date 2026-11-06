@@ -161,10 +161,17 @@ test("apply wires rows, the turn bar, the review panel, session badges and style
 	delete globalThis.document;
 
 	const rows = registrations.filter((entry) => entry.slot === "tool.call.toolview");
-	assert.deepEqual(
-		rows.map((entry) => entry.spec.key),
-		["edit", "write", "apply_patch"]
-	);
+	assert.deepEqual(rows.map((entry) => entry.spec.key), [
+		"edit",
+		"write",
+		"apply_patch",
+		"replace_string_in_file",
+		"multi_replace_string_in_file",
+		"create_file",
+		"write_to_file",
+		"edit_file",
+		"multi_edit"
+	]);
 	for (const entry of rows) {
 		assert.equal(entry.spec.name, "tool.call.toolview");
 		assert.equal(typeof entry.spec.inject, "function");
@@ -195,6 +202,24 @@ test("apply wires rows, the turn bar, the review panel, session badges and style
 	assert.ok(dictionaries["live-diff"]?.en?.["panel.title"], "en dictionary registered");
 	assert.ok(exported.inject.includes("sidebarRightTabs"));
 });
+
+/**
+ * The component apply registered for one tool key, after a fresh apply.
+ * @param exported - the bundle's exports.
+ * @param key - tool name, as used in the toolview slot.
+ * @returns the component.
+ */
+function registrationsForKey(exported, key) {
+	const { ctx, registrations } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: () => {} },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	exported.apply(ctx);
+	delete globalThis.document;
+	return registrations.find((entry) => entry.spec.key === key).component;
+}
 
 test("the edit row is collapsed until asked, and its badge opens the review panel", async () => {
 	const definition = loadBundle();
@@ -234,6 +259,53 @@ test("the edit row is collapsed until asked, and its badge opens the review pane
 	assert.equal(openedTabs[0].kind, "live-diff");
 
 	queue = [0, { revision: 3, totals: { edits: 2, files: 1, open: 2, openFiles: 1, added: 5, removed: 2 }, records: [record] }, false, false, null];
+test("an editor replace renders a diff from its arguments when the host recorded nothing", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: () => {} },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	const Row = registrationsForKey(exported, "replace_string_in_file");
+	const t = (key, fallback) => fallback ?? key;
+	const args = {
+		filePath: "/work/a.js",
+		oldString: "one\ntwo\n",
+		newString: "one\nTWO\n"
+	};
+	const props = {
+		phase: "result",
+		toolName: "replace_string_in_file",
+		block: { callId: "import-1", args },
+		callId: "import-1",
+		liveDiffSessionId: "s1",
+		cwd: "/work",
+		home: "/home/u",
+		openFile: () => {},
+		t
+	};
+
+	queue = [0, { loaded: true, records: [], error: null }, null, false, false];
+	const collapsed = Row(props);
+	const collapsedText = textOf(collapsed);
+	assert.match(collapsedText, /Replaced/);
+	assert.match(collapsedText, /\+2/);
+	assert.match(collapsedText, /−2/);
+	assert.doesNotMatch(collapsedText, /TWO/, "the fragment stays folded until asked");
+	assert.ok(findButton(collapsed, "ld-toggle"), "the argument-only row keeps its chevron");
+
+	queue = [0, { loaded: true, records: [], error: null }, null, false, true];
+	const opened = Row(props);
+	const openedText = textOf(opened);
+	assert.match(openedText, /TWO/, "expanding shows the added fragment");
+	assert.match(openedText, /two/, "expanding shows the removed fragment");
+});
+
 	const Bar = registrations.find((entry) => entry.spec.name === "conversation.chat.turnTail").component;
 	const bar = Bar({ sessionId: "s1", cwd: "/work", home: "/home/u", openFile: () => {}, t });
 	const barText = textOf(bar);

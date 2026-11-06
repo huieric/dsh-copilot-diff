@@ -74,9 +74,19 @@ function makeHost() {
 		effect: (fn) => fn()
 	};
 	const emit = (exec, result) => listeners.get("tools/result")(exec, result);
+	const preExec = (exec) => listeners.get("tools/pre-execute")(exec, async () => ({ kind: "allow" }));
+	/** Run a whole editor-style call: snapshot first, then the result. */
+	const run = async (name, callId, args, value) => {
+		const exec = { name, callId, agent: { id: "s1" }, arguments: args };
+		await preExec(exec);
+		return emit(exec, { isError: false, value });
+	};
 	return {
 		ctx: guarded(ctx),
 		files,
+		preExec,
+		run,
+		emitExec: (exec, value) => emit(exec, { isError: false, value }),
 		call: (endpoint, payload) => handle(endpoint, payload),
 		edit: (callId, path, before, after) =>
 			emit(
@@ -112,7 +122,7 @@ test("an edit becomes one entry with stats and hunks", async () => {
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
 		host.files.set("/work/a.js", "one\ntwo\nthree\n");
-		host.edit("c1", "/work/a.js", "one\ntwo\nthree\n", "one\nTWO\nthree\n");
+		await host.edit("c1", "/work/a.js", "one\ntwo\nthree\n", "one\nTWO\nthree\n");
 
 		const listed = await host.call("list", { sessionId: "s1" });
 		assert.equal(listed.ok, true);
@@ -142,8 +152,8 @@ test("a no-op edit, a failed call and a foreign tool are all ignored", async () 
 	await withHome(async () => {
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
-		host.edit("c1", "/work/a.js", "same\n", "same\n");
-		host.fail("c2");
+		await host.edit("c1", "/work/a.js", "same\n", "same\n");
+		await host.fail("c2");
 		host.ctx.on("tools/result");
 		const listed = await host.call("list", { sessionId: "s1" });
 		assert.equal(listed.value.totals.edits, 0);
@@ -155,7 +165,7 @@ test("one apply_patch yields one entry per changed file", async () => {
 	await withHome(async () => {
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
-		host.patch("c1", [
+		await host.patch("c1", [
 			{
 				index: 0,
 				kind: "update",
@@ -195,7 +205,7 @@ test("undo restores the previous text, and refuses after a later edit", async ()
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
 		host.files.set("/work/a.js", "v1\n");
-		host.edit("c1", "/work/a.js", "v1\n", "v2\n");
+		await host.edit("c1", "/work/a.js", "v1\n", "v2\n");
 		host.files.set("/work/a.js", "v2\n"); // the edit tool already wrote it
 		assert.equal(host.files.get("/work/a.js"), "v2\n");
 
@@ -205,7 +215,7 @@ test("undo restores the previous text, and refuses after a later edit", async ()
 		assert.equal(undone.value.records[0].state, "reverted");
 
 		// A second edit, then a change made outside the plugin: the older undo must refuse.
-		host.edit("c2", "/work/a.js", "v1\n", "v2\n");
+		await host.edit("c2", "/work/a.js", "v1\n", "v2\n");
 		host.files.set("/work/a.js", "v2\n");
 		host.files.set("/work/a.js", "hand edited\n");
 		const refused = await host.call("revert", { sessionId: "s1", id: "e2" });
@@ -221,7 +231,7 @@ test("undoing a creation removes the file", async () => {
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
 		host.files.set("/work/new.js", "fresh\n");
-		host.edit("c1", "/work/new.js", null, "fresh\n");
+		await host.edit("c1", "/work/new.js", null, "fresh\n");
 		const undone = await host.call("revert", { sessionId: "s1", id: "e1" });
 		assert.equal(undone.ok, true);
 		assert.equal(host.files.has("/work/new.js"), false);
@@ -233,8 +243,8 @@ test("keep marks entries kept and keep-all closes every open entry", async () =>
 	await withHome(async () => {
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
-		host.edit("c1", "/work/a.js", "a\n", "b\n");
-		host.edit("c2", "/work/b.js", "c\n", "d\n");
+		await host.edit("c1", "/work/a.js", "a\n", "b\n");
+		await host.edit("c2", "/work/b.js", "c\n", "d\n");
 
 		const kept = await host.call("keep", { sessionId: "s1", id: "e1" });
 		assert.equal(kept.value.changed, 1);
@@ -252,9 +262,9 @@ test("revert-all walks back in reverse order and reports leftovers", async () =>
 		const host = makeHost();
 		const dispose = await apply(host.ctx);
 		host.files.set("/work/a.js", "1\n");
-		host.edit("c1", "/work/a.js", "1\n", "2\n");
+		await host.edit("c1", "/work/a.js", "1\n", "2\n");
 		host.files.set("/work/a.js", "2\n");
-		host.edit("c2", "/work/a.js", "2\n", "3\n");
+		await host.edit("c2", "/work/a.js", "2\n", "3\n");
 		host.files.set("/work/a.js", "3\n");
 		const reverted = await host.call("revert-all", { sessionId: "s1" });
 		assert.equal(reverted.ok, true);
@@ -268,7 +278,7 @@ test("the log survives a restart", async () => {
 	await withHome(async (dir) => {
 		const first = makeHost();
 		const disposeFirst = await apply(first.ctx);
-		first.edit("c1", "/work/a.js", "a\n", "b\n");
+		await first.edit("c1", "/work/a.js", "a\n", "b\n");
 		first.files.set("/work/a.js", "b\n");
 		await disposeFirst();
 
@@ -298,5 +308,94 @@ test("unknown endpoints and missing session ids are refused", async () => {
 		const missing = await host.call("revert", { sessionId: "s1", id: "e404" });
 		assert.equal(missing.ok, false);
 		await dispose();
+	});
+});
+
+
+test("an editor replace shows the whole file, not just the swapped fragment", async () => {
+	await withHome(async () => {
+		const host = makeHost();
+		await apply(host.ctx);
+		host.files.set("/work/a.js", "one\ntwo\nthree\n");
+
+		const exec = {
+			name: "replace_string_in_file",
+			callId: "r1",
+			agent: { id: "s1" },
+			arguments: { filePath: "/work/a.js", oldString: "two", newString: "TWO" }
+		};
+		await host.preExec(exec);
+		host.files.set("/work/a.js", "one\nTWO\nthree\n");
+		await host.emitExec(exec, { ok: true });
+
+		const detail = await host.call("detail", { sessionId: "s1", callId: "r1" });
+		assert.equal(detail.ok, true);
+		assert.equal(detail.value.records.length, 1);
+		const [record] = detail.value.records;
+		assert.equal(record.tool, "replace_string_in_file");
+		assert.equal(record.path, "/work/a.js");
+		assert.equal(record.before, "one\ntwo\nthree\n");
+		assert.equal(record.after, "one\nTWO\nthree\n");
+		assert.equal(record.added, 1);
+		assert.equal(record.removed, 1);
+	});
+});
+
+test("a multi-file editor replace becomes one entry per file", async () => {
+	await withHome(async () => {
+		const host = makeHost();
+		await apply(host.ctx);
+		host.files.set("/work/a.js", "alpha\n");
+		host.files.set("/work/b.js", "beta\n");
+
+		const exec = {
+			name: "multi_replace_string_in_file",
+			callId: "m1",
+			agent: { id: "s1" },
+			arguments: {
+				explanation: "rename",
+				replacements: [
+					{ filePath: "/work/a.js", oldString: "alpha", newString: "ALPHA" },
+					{ filePath: "/work/b.js", oldString: "beta", newString: "BETA" }
+				]
+			}
+		};
+		await host.preExec(exec);
+		host.files.set("/work/a.js", "ALPHA\n");
+		host.files.set("/work/b.js", "BETA\n");
+		await host.emitExec(exec, { ok: true });
+
+		const listed = await host.call("list", { sessionId: "s1" });
+		assert.equal(listed.value.totals.edits, 2);
+		assert.equal(listed.value.totals.files, 2);
+		const fresh = await host.call("detail", { sessionId: "s1", callId: "m1" });
+		assert.deepEqual(
+			fresh.value.records.map((record) => record.path).sort(),
+			["/work/a.js", "/work/b.js"]
+		);
+	});
+});
+
+test("a created file is recorded as an addition without a before side", async () => {
+	await withHome(async () => {
+		const host = makeHost();
+		await apply(host.ctx);
+
+		const exec = {
+			name: "create_file",
+			callId: "c9",
+			agent: { id: "s1" },
+			arguments: { filePath: "/work/new.js", content: "first\nsecond\n" }
+		};
+		await host.preExec(exec);
+		host.files.set("/work/new.js", "first\nsecond\n");
+		await host.emitExec(exec, { ok: true });
+
+		const fresh = await host.call("detail", { sessionId: "s1", callId: "c9" });
+		const [record] = fresh.value.records;
+		assert.equal(record.before, null);
+		assert.equal(record.after, "first\nsecond\n");
+		assert.equal(record.created, true);
+		assert.equal(record.added, 2);
 	});
 });

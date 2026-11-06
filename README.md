@@ -12,13 +12,18 @@
 
 ![展开后的 diff](docs/screenshots/expanded.png)
 
+![换字符串的调用同样有 diff](docs/screenshots/replace.png)
+
+> 第三张图里的 `替换 rotator.h +3 −3` 没有任何服务端记录——它完全是靠调用参数画出来的，这也是被 `dsh-chat-import` 导入的 Copilot 历史会话能显示 diff 的原因。
+
 > 截图由 `tools/preview.mjs` 用本插件真实的组件 + 合成数据渲染出来（`node tools/preview.mjs > docs/preview.html`，浏览器直接打开即可交互），不包含任何真实会话内容。
 
 ## 功能
 
 | 能力 | 说明 |
 | --- | --- |
-| 每次修改自动追踪 | 观察 `edit` / `write` / `apply_patch`，一次调用 = 一条独立记录（`apply_patch` 改多个文件时按文件各记一条） |
+| 每次修改自动追踪 | 观察 `edit` / `write` / `apply_patch`，以及编辑器风格的 `replace_string_in_file` / `multi_replace_string_in_file` / `edit_file` / `multi_edit` / `create_file` / `write_to_file`；一次调用 = 一条独立记录（一次改多个文件时按文件各记一条） |
+| 换字符串也能看 diff | 这类工具的结果里没有修改前后的全文，所以在调用前先快照目标文件、调用后再读一遍，用两份文本算 diff；连快照都拿不到时（导入的历史记录、绕过工具管线的调用）就直接用参数里的 `oldString` / `newString` 画片段 |
 | 行内 diff | 展开后就是完整统一 diff：双侧行号、`@@` 块头、增删底色；超过 12 行折叠为「Show N more lines」 |
 | 增删统计 | 动作行右侧常驻 `+A −R`，与 Copilot 的动作行一致 |
 | 默认收起 | 每条记录只占一行摘要，不会把聊天流撑成一片 diff；点行首 `>` 展开 |
@@ -122,9 +127,11 @@ dsh web
 - 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.2`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
+- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.3`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
 
 ## 变更记录
+
+- `0.1.3` — 让"换字符串"类调用也能看 diff。新增 `tools/pre-execute` 快照：对 `replace_string_in_file`、`multi_replace_string_in_file`、`edit_file`、`multi_edit`、`create_file`、`write_to_file` 在读参数里列出的文件之前先存一份原文，结果回来后再读一遍算 diff；服务端没有记录时客户端还会用参数里的 `oldString`/`newString`/`content` 现场画片段，所以**导入的历史会话、绕过工具管线的调用、插件热重载中途的调用都有 diff 可看**。toolview 注册键从 3 个扩到 9 个，动词补 `替换`/`Replaced`。
 
 - `0.1.2` — 改成 Copilot 的读法：动作行默认收起，点 `>` 才展开 diff；`+A −R` 变成按钮，点开右侧审阅面板并定位到这次修改；轮末汇总条在收起过程后仍然可见；侧边栏会话行新增该会话累计的 `+A −R` 徽标（新增 `summaries` 批量端点，5 秒一轮，只查可见会话）。顺带修了两个只在真实 locale 下才炸的问题：把回退文案当插值参数传给 `t()`（模板含 `{}` 时 `name in params` 抛错），以及窄面板里按钮文字被挤成竖排。
 - `0.1.1` — 修复无法激活：`inject` 漏了 `connection.register` 内部实际依赖的 `webServer`（启动摘要显示 `cannot get property "webServer" without inject`）。测试补了一条守卫，要求声明的服务覆盖真正用到的服务，这类问题从此是测试失败而不是装完静默消失。
