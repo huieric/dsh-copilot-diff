@@ -51,7 +51,10 @@
 # 从 npm（发布后）
 dsh plugin --profile web add dsh-live-diff
 
-# 或直接从本地检出安装
+# 直接从 GitHub 装（pnpm 支持 git 依赖）
+dsh plugin --profile web add github:huieric/dsh-live-diff
+
+# 或先 clone，再从本地目录装
 git clone https://github.com/huieric/dsh-live-diff.git
 dsh plugin --profile web add ./dsh-live-diff
 
