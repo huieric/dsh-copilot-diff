@@ -64,6 +64,27 @@ dsh web
 
 插件自带 `cordis.patch.yml`（`dsh.bundle.patch`），装进 profile 后会自动插入自身的插件行，无需手改配置。
 
+### 装不上时
+
+两个真实踩过的坑：
+
+1. **`ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK … /run/user/<uid>/pnpm-store-operation-locks-*/all-stores.lock: Permission denied`**
+   pnpm 把 store 的操作锁放在 `$XDG_RUNTIME_DIR` 下；该目录不可写（容器、systemd 用户会话异常、或命令跑在受限沙箱里）时安装会直接失败。把锁指到可写目录即可：
+
+   ```bash
+   XDG_RUNTIME_DIR="$HOME/.run" dsh plugin --profile web add dsh-live-diff
+   ```
+
+2. **装完不生效 / 启动摘要里 `live-diff (dsh-live-diff): …` 之后整条消失**
+   看 `dsh` 启动摘要里的 "did not activate" 一行，它写明了原因。`0.1.0` 曾漏声明 `webServer` 服务（`cannot get property "webServer" without inject`），`0.1.1` 已修复——升级即可。
+
+完全不依赖 pnpm 的安装方式（离线可用：复制文件 + 注册 bundle）：
+
+```bash
+./scripts/install-local.sh          # 装进 web profile
+./scripts/install-local.sh --remove # 卸载
+```
+
 ## 使用
 
 - **看**：每条改文件的动作行右侧就是 `+A −R`，下方是这一次的 diff。点文件名在编辑器打开该文件，点「Show N more lines」展开完整补丁。
@@ -98,14 +119,19 @@ dsh web
 - 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 尚未在 npm 发布（先看需求）。
+- npm 包名 `dsh-live-diff` 已在仓库里就绪，发布状态见仓库 Release。
+
+## 变更记录
+
+- `0.1.1` — 修复无法激活：`inject` 漏了 `connection.register` 内部实际依赖的 `webServer`（启动摘要显示 `cannot get property "webServer" without inject`）。测试补了一条守卫，要求声明的服务覆盖真正用到的服务，这类问题从此是测试失败而不是装完静默消失。
+- `0.1.0` — 首个版本。
 
 ## 开发
 
 ```bash
 git clone https://github.com/huieric/dsh-live-diff.git
 cd dsh-live-diff
-npm test          # 21 个用例：diff 引擎 / 服务端记录与撤销 / 客户端渲染与注册
+npm test          # 22 个用例：diff 引擎 / 服务端记录与撤销 / 客户端渲染与注册
 ```
 
 - `lib/index.js` — 服务端：diff 引擎、每 session 的 `EditLog`、`/live-diff` 通道。

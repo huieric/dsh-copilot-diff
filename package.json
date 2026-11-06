@@ -1,6 +1,6 @@
 {
   "name": "dsh-live-diff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: +A/-R on each edit row, a per-turn summary bar with Keep and Undo, and one-click undo for a single edit.",
   "keywords": [
     "dsh",
@@ -55,14 +55,6 @@
         "@deepseek-ai/dsh-client-locale"
       ],
       "platform": "web"
-    }
-  },
-  "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.2-rc.1"
-  },
-  "peerDependenciesMeta": {
-    "@deepseek-ai/dsh": {
-      "optional": true
     }
   }
 }

@@ -4,7 +4,33 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { apply } from "../lib/index.js";
+import { apply, inject } from "../lib/index.js";
+
+/**
+ * Cordis hands a plugin only the services it declares in `inject`; touching any
+ * other one fails at plugin activation (`cannot get property "x" without
+ * inject`). The guard below turns that runtime rule into a test failure instead
+ * of a bundle that installs cleanly and silently never activates.
+ */
+const DECLARED = new Set([...inject, "logger", "on", "effect"]);
+
+function guarded(ctx) {
+	return new Proxy(ctx, {
+		get(target, key, receiver) {
+			if (typeof key === "string" && !DECLARED.has(key)) {
+				throw new Error(`cannot get property ${JSON.stringify(key)} without inject`);
+			}
+			return Reflect.get(target, key, receiver);
+		}
+	});
+}
+
+test("declares every service it touches, so activation cannot fail on inject", () => {
+	assert.deepEqual(
+		[...inject].sort(),
+		["connection", "fs", "webServer", "workspaceRegistry"]
+	);
+});
 
 /**
  * Host stand-in: an in-memory file system, one workspace, and the two host
@@ -49,7 +75,7 @@ function makeHost() {
 	};
 	const emit = (exec, result) => listeners.get("tools/result")(exec, result);
 	return {
-		ctx,
+		ctx: guarded(ctx),
 		files,
 		call: (endpoint, payload) => handle(endpoint, payload),
 		edit: (callId, path, before, after) =>
