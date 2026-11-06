@@ -265,6 +265,20 @@ test("history file size is checked before parse and repeated acquisition cutoff 
   assert.ok((await next.restore(1)).conflict);
  },{turns:2});
 });
+test("many directory transitions persist bounded limitations and reload reliably", async () => {
+ await fixture(async ({root,cp,options})=>{
+  for(let i=0;i<120;i++) writeFileSync(join(root,`file-${i}`),"A");
+  await cp.start(1);
+  for(let i=0;i<120;i++){rmSync(join(root,`file-${i}`));mkdirSync(join(root,`file-${i}`));}
+  await cp.end(1);
+  assert.equal(cp.summaries()[0].limitations.length,100);
+  assert.match(cp.summaries()[0].limitations[98],/22 additional capture limitations omitted/);
+  const next=new Checkpoints("s",options);
+  assert.equal(next.loadError,undefined);
+  assert.equal(next.summaries()[0].status,"limited");
+  assert.equal(next.summaries()[0].limitations.length,100);
+ });
+});
 test("file replaced by empty directory reports unsupported type instead of a restorable deletion", async () => {
  await fixture(async ({root,cp})=>{
   writeFileSync(join(root,"a"),"A");await cp.start(1);rmSync(join(root,"a"));mkdirSync(join(root,"a"));await cp.end(1);

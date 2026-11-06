@@ -19,6 +19,10 @@ Implemented the six groups from final-fix-brief.md against reviewed base f421781
 
 Initial failed runs exposed outdated fixture service contracts, malformed synthetic apply_patch results, and missing summaries.sums in the badge fixture; fixtures were corrected to actual RPC/host shapes and rerun. No production assertions were removed to hide failures.
 
+## Scoped rereview follow-up
+
+The parent review identified that 100+ file-to-directory transitions could append more than the validated 100 limitation messages, making a generated checkpoint unreadable after restart. Added one shared deduplicating bounded-limitation helper at capture completion, persistence, interruption recovery, and persistence failure. It retains an explicit omitted-count summary and the newest reason rather than dropping the failure reason. A 120-transition save/reload regression verifies 100 retained messages, an explicit omission count, limited status, and no loadError. Final `npm test`: 78 passed, 0 failed (20 checkpoint tests).
+
 ## Evidence limits
 
 No publish, installation, host restart, or live session mutation was performed. Authenticated host GUI navigation and successful installed-host writes are not claimed. The known real-host FS smoke EXDEV/tool-sandbox atomic rename limitation remains; all workspace writes still go through host fs, with no raw-write fallback. Parent owns browser smoke and package/docs verification.
