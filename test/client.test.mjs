@@ -598,7 +598,7 @@ test("all changes hydrate summary bodies and stale replies cannot leak across se
 	const ui = await setupHooks(async (_channel, endpoint, payload) => {
 		requests.push(endpoint);
 		if (payload.sessionId === "old") return new Promise((resolve) => { resolveOld = resolve; });
-		if (endpoint === "detail") return { ok: true, value: { records: [{ ...record, hunks: record.hunks.map(({ rows, ...h }) => ({ ...h, lines: rows })) }] } };
+		if (endpoint === "detail") return { ok: true, value: { records: [{ ...record, hunks: record.hunks.map(({ rows, ...h }) => ({ ...h, lines: [...rows.map((row) => row.t + row.s), "\\ No newline at end of file"] })) }] } };
 		return { ok: true, value: { records: [{ ...record, hunks: undefined }] } };
 	});
 	ui.render(ui.pane, { sessionId: "old" });
@@ -608,6 +608,12 @@ test("all changes hydrate summary bodies and stale replies cannot leak across se
 	view = ui.render(ui.pane, { sessionId: "new" });
 	assert.match(textOf(view), /was here/);
 	assert.ok(requests.includes("detail"));
+	assert.doesNotMatch(textOf(view), /No newline|undefined|NaN/);
+	collectNodes(view, "ld-btn").find((button) => textOf(button) === "Side by side").props.onClick();
+	view = ui.render(ui.pane, { sessionId: "new" });
+	assert.match(textOf(view), /was here/);
+	assert.match(textOf(view), /now here/);
+	assert.doesNotMatch(textOf(view), /No newline|undefined|NaN/);
 	resolveOld({ ok: true, value: { records: [{ ...record, path: "OLD-SESSION" }] } }); await settle();
 	assert.doesNotMatch(textOf(ui.render(ui.pane, { sessionId: "new" })), /OLD-SESSION/);
 	ui.dispose();
@@ -647,4 +653,41 @@ test("ok:true partial mutation failures remain visible in the pane", async () =>
 	view = ui.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(view), /a.js: changed externally/);
 	ui.dispose();
+});
+
+
+test("polling cannot cancel reverse-order call undo or hide its deferred failures", async () => {
+	let poll, resolveFirst;
+	const mutations = [];
+	const records = [record, { ...record, id: "e2" }];
+	const ui = await setupHooks(async (_channel, endpoint, payload) => {
+		if (endpoint === "revert") {
+			mutations.push(payload.id);
+			if (mutations.length === 1) return new Promise((resolve) => { resolveFirst = resolve; });
+			return { ok: true, value: { failures: [{ path: record.path, message: "external conflict" }] } };
+		}
+		return { ok: true, value: { records: [...records] } };
+	});
+	const Row = ui.registrations.find((entry) => entry.spec.key === "edit").component;
+	const rowRun = hookRunner(); Object.assign(ui.hooks, rowRun.hooks);
+	rowRun.render(Row, { phase: "result", block: { callId: "c1" }, liveDiffSessionId: "s1" }); await settle();
+	const row = rowRun.render(Row, { phase: "result", block: { callId: "c1" }, liveDiffSessionId: "s1" });
+	findButton(row, "ld-badge").props.onClick();
+	const run = hookRunner(); Object.assign(ui.hooks, run.hooks);
+	const originalInterval = globalThis.setInterval;
+	globalThis.setInterval = (fn) => { poll = fn; return { unref() {} }; };
+	try { run.render(ui.pane, { sessionId: "s1" }); } finally { globalThis.setInterval = originalInterval; }
+	await settle();
+	let pane = run.render(ui.pane, { sessionId: "s1" });
+	const pending = collectNodes(pane, "ld-btn").find((button) => button.props["aria-label"] === "Undo Selected call").props.onClick();
+	assert.deepEqual(mutations, ["e2"]);
+	poll(); await settle();
+	pane = run.render(ui.pane, { sessionId: "s1" }); await settle();
+	pane = run.render(ui.pane, { sessionId: "s1" });
+	assert.equal(collectNodes(pane, "ld-btn").find((button) => button.props["aria-label"] === "Undo Selected call").props.disabled, true, "poll preserves busy state");
+	resolveFirst({ ok: true, value: { failures: [] } }); await pending;
+	assert.deepEqual(mutations, ["e2", "e1"], "poll does not abort the remaining undo target");
+	pane = run.render(ui.pane, { sessionId: "s1" });
+	assert.match(textOf(pane), /external conflict/);
+	run.dispose(); rowRun.dispose(); ui.dispose();
 });
