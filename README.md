@@ -4,7 +4,7 @@
 
 一个 DeepSeek Harness 的 web 插件。它不拦截、不代理任何模型调用——只是观察已经成功的 `edit` / `write` / `apply_patch` 结果，把「这一次调用改了什么」独立记成一条，然后在聊天流里就地渲染。
 
-默认收起，只留一行摘要；点 `>` 才展开这一处的 diff，点 `+A −R` 直接在右侧审阅面板里定位到它：
+默认收起，只留一行摘要；点 `>` 才展开这一处的 diff，点 `+A −R` 直接在右侧审阅面板里定位到它。每一轮结束会补一行 Copilot 式页脚（步数、用时、`+A −R`、`N 个文件已修改`、**保留 / 撤销**）：
 
 ![行内 diff 与审阅面板](docs/screenshots/overview.png)
 
@@ -131,6 +131,7 @@ dsh web
 
 ## 变更记录
 
+- `0.1.6` — 每轮结束补上 Copilot 式页脚：一行 `已完成 81 步 · 用时 29m 36s +158 −55`，一行 `2 个文件已修改 +158 −55` 加右侧 **保留 / 撤销**。撤销只作用于这一轮（`revert-turn` 按时间窗回写），保留把这一轮的记录标成 kept 不再提供撤销；聊天区没有任何边框盒子，就是两行文字加两个小按钮。
 - `0.1.5` — 改名：包名 `dsh-live-diff` → **`dsh-copilot-diff`**（仓库、npm 同步）。插件行 id 变成 `copilot-diff`，连接频道 `/copilot-diff`，客户端 bundle id 与面板 id 一起改；旧的本地记录会自动从 `~/.dsh/live-diff/sessions/` 读一次（只读兼容），之后写到 `~/.dsh/copilot-diff/`。从旧包升级：`dsh plugin --profile web remove dsh-live-diff && dsh plugin --profile web add dsh-copilot-diff`。
 - `0.1.4` — 按截图反馈改了三处：① 审阅面板改成**正序**（和聊天区动作行同一顺序，原来是倒序）；② 面板里每个文件**默认展开 diff**，整条标题行都可以点（原来只有一个小三角能点，而且默认收起，看不到内容）；③ **去掉轮末那条汇总横条**（`N files changed · M edits +X −Y` + 查看/保留/全部撤销）——数字已经在面板顶部和会话行徽标里，聊天流里再摆一条是重复的噪音。
 - `0.1.3` — 让"换字符串"类调用也能看 diff。新增 `tools/pre-execute` 快照：对 `replace_string_in_file`、`multi_replace_string_in_file`、`edit_file`、`multi_edit`、`create_file`、`write_to_file` 在读参数里列出的文件之前先存一份原文，结果回来后再读一遍算 diff；服务端没有记录时客户端还会用参数里的 `oldString`/`newString`/`content` 现场画片段，所以**导入的历史会话、绕过工具管线的调用、插件热重载中途的调用都有 diff 可看**。toolview 注册键从 3 个扩到 9 个，动词补 `替换`/`Replaced`。

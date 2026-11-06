@@ -256,7 +256,7 @@ var connection = {
 				SESSIONS.forEach(function (session) { sums[session.id] = session.totals; });
 				return Promise.resolve({ ok: true, value: { sums: sums } });
 			}
-			if (endpoint === "keep" || endpoint === "revert" || endpoint === "keep-all" || endpoint === "revert-all") {
+			if (endpoint === "keep" || endpoint === "revert" || endpoint === "keep-all" || endpoint === "revert-all" || endpoint === "keep-turn" || endpoint === "revert-turn") {
 				return Promise.resolve({ ok: true, value: { sessionId: "s1", totals: TOTALS, records: ENTRIES } });
 			}
 			return Promise.resolve({ ok: false, error: { message: "unknown endpoint " + endpoint } });
@@ -311,6 +311,7 @@ function buildPage(bundleCss) {
 	var Row = findBySlot("tool.call.toolview/edit");
 	var Pane = findBySlot("sidebar.right.pane.tab");
 	var Badge = findBySlot("sidebar.workspaces.session.row.action");
+	var Footer = findBySlot("conversation.chat.turnTail");
 	var common = { cwd: "/work/product", home: "/home/dev", openFile: function () {}, t: t };
 
 	var sessions = SESSIONS.map(function (session) {
@@ -356,7 +357,13 @@ function buildPage(bundleCss) {
 		),
 		createElement("main", { className: "pv-chat" },
 			createElement("div", { className: "pv-msg" }, "把 interval checker 的重算逻辑改成按区间批处理，配置路径改成从环境变量读。"),
-			createElement("div", { className: "pv-rows" }, rows)
+			createElement("div", { className: "pv-rows" }, rows),
+			Footer === undefined ? null : createElement(Footer, {
+				turn: { start: { time: 1762457324000 }, end: { time: 1762459100000 }, steps: new Array(81), status: "closed" },
+				sessionId: "s1",
+				openFile: common.openFile,
+				t: t
+			})
 		),
 		createElement("section", { className: "pv-pane" },
 			createElement("div", { className: "pv-panehead" }, "变更"),

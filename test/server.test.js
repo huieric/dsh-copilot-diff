@@ -274,6 +274,35 @@ test("revert-all walks back in reverse order and reports leftovers", async () =>
 	});
 });
 
+test("keep-turn and revert-turn only touch the window they were given", async () => {
+	await withHome(async () => {
+		const host = makeHost();
+		const dispose = await apply(host.ctx);
+		host.files.set("/work/a.js", "1\n");
+		await host.edit("c1", "/work/a.js", "1\n", "2\n");
+		host.files.set("/work/a.js", "2\n");
+		const first = (await host.call("list", { sessionId: "s1" })).value.records[0];
+		// Distinct milliseconds: two edits stamped in the same one share a window.
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		host.files.set("/work/b.js", "x\n");
+		await host.edit("c2", "/work/b.js", "x\n", "y\n");
+		host.files.set("/work/b.js", "y\n");
+		const second = (await host.call("list", { sessionId: "s1" })).value.records[1];
+
+		// A window covering only the first edit must leave the second one open.
+		const kept = await host.call("keep-turn", { sessionId: "s1", from: 0, to: first.time });
+		assert.equal(kept.value.changed, 1);
+		assert.equal(kept.value.totals.open, 1);
+
+		const reverted = await host.call("revert-turn", { sessionId: "s1", from: second.time, to: second.time });
+		assert.equal(reverted.ok, true);
+		assert.equal(reverted.value.reverted, 1);
+		assert.equal(host.files.get("/work/b.js"), "x\n");
+		assert.equal(host.files.get("/work/a.js"), "2\n", "the kept edit was not written back");
+		await dispose();
+	});
+});
+
 test("the log survives a restart", async () => {
 	await withHome(async (dir) => {
 		const first = makeHost();

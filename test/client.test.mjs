@@ -147,7 +147,7 @@ test("the bundle registers one module and exports apply + inject", () => {
 	assert.ok(Array.isArray(exported.inject));
 });
 
-test("apply wires rows, the turn bar, the review panel, session badges and styles", async () => {
+test("apply wires rows, the turn footer, the review panel, session badges and styles", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
 
@@ -178,8 +178,11 @@ test("apply wires rows, the turn bar, the review panel, session badges and style
 		assert.equal(entry.spec.inject("s-1").liveDiffSessionId, "s-1");
 	}
 
-	const bar = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
-	assert.equal(bar.length, 0, "the turn summary bar is gone: the panel and the session badge carry those numbers");
+	const foot = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
+	assert.equal(foot.length, 1, "one Copilot-style footer per turn");
+	assert.equal(foot[0].spec.id, "dsh-copilot-diff");
+	assert.equal(foot[0].spec.order, -1);
+	assert.equal(foot[0].spec.inject("s-1").sessionId, "s-1");
 
 	const diffOn = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab");
 	assert.equal(diffOn.length, 1);
@@ -340,4 +343,41 @@ test("the pending phase renders a placeholder row", async () => {
 	const row = Row({ phase: "start", block: { args: { path: "/work/src/b.js" } }, liveDiffSessionId: "s1", cwd: "/work", openFile: () => {}, t });
 	assert.match(textOf(row), /Editing/);
 	assert.match(textOf(row), /b\.js/);
+});
+
+test("the turn footer reports steps, duration and the change count like Copilot", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx, registrations } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: () => {} },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	const Footer = registrations.find((entry) => entry.slot === "conversation.chat.turnTail").component;
+	const turn = {
+		start: { time: 1000 },
+		end: { time: 1000 + 65_000 },
+		steps: [{}, {}, {}]
+	};
+	const insideTurn = { ...record, time: 30_000 };
+	const t = (key, fallback) => fallback ?? key;
+
+	// useRevision, data, busy, notice
+	queue = [0, { records: [insideTurn] }, false, null];
+	const footer = Footer({ turn, sessionId: "s1", t });
+	const text = textOf(footer);
+	assert.match(text, /Completed 3 steps in 1m 5s/, "the completed line carries steps and duration");
+	assert.match(text, /1 files changed/, "the bar counts distinct files");
+	assert.match(text, /\+1/);
+	assert.match(text, /−1/);
+	assert.ok(findButton(footer, "ld-turnbar"), "the keep/undo bar is present");
+	assert.ok(findButton(footer, "ld-btn"), "Keep and Undo are buttons");
+
+	queue = [0, { records: [{ ...record, time: 30_000 }] }, false, null];
+	const other = Footer({ turn: { start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
+	assert.equal(other, null, "a turn that changed nothing renders no footer");
 });
