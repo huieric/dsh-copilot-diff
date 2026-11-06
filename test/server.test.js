@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { apply, inject } from "../lib/index.js";
+
+/** Long enough for the debounced write to land. */
+const SAVE_WAIT = 500;
 
 /**
  * Cordis hands a plugin only the services it declares in `inject`; touching any
@@ -426,5 +429,44 @@ test("a created file is recorded as an addition without a before side", async ()
 		assert.equal(record.after, "first\nsecond\n");
 		assert.equal(record.created, true);
 		assert.equal(record.added, 2);
+	});
+});
+
+test("a save keeps the records another writer left in the same log", async () => {
+	await withHome(async (home) => {
+		const host = makeHost();
+		const dispose = await apply(host.ctx);
+		const file = join(home, "copilot-diff", "sessions", "s1.json");
+		host.files.set("/work/a.js", "a\n");
+		await host.edit("c1", "/work/a.js", "a\n", "b\n");
+		await new Promise((resolve) => setTimeout(resolve, SAVE_WAIT));
+
+		// Something else (the backfill CLI, or an earlier host process) writes too.
+		const stored = JSON.parse(readFileSync(file, "utf8"));
+		stored.records.push({
+			id: "h1",
+			callId: "c9",
+			tool: "edit",
+			path: "/work/a.js",
+			before: null,
+			after: "x\n",
+			added: 1,
+			removed: 0,
+			time: Date.now(),
+			state: "kept",
+			source: "backfill",
+			hunks: []
+		});
+		writeFileSync(file, JSON.stringify(stored));
+
+		await host.edit("c2", "/work/a.js", "b\n", "c\n");
+		await new Promise((resolve) => setTimeout(resolve, SAVE_WAIT));
+
+		const merged = JSON.parse(readFileSync(file, "utf8"));
+		assert.deepEqual(
+			merged.records.map((record) => record.callId).sort(),
+			["c1", "c2", "c9"]
+		);
+		await dispose();
 	});
 });

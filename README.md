@@ -148,7 +148,9 @@ node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
 
 ## 变更记录
 
-- `0.1.7` — 历史回填：旧会话不再空白。新增 `lib/history.js`（从会话日志重放 `tool/call` + `tool/result`，优先用 `dshFileReview` 的 `oldText`/`newText`，退一步用 `replace_string_in_file` 之类的参数对），服务端在第一次打开一个没有记录的旧会话时自动跑一遍并落盘；`tools/backfill.mjs` 可一次补完全部会话（`--dry` / `--only` / `--since`）。顺带把 diff 引擎抽到 `lib/diff.js`，并开始识别 `file_path` / `old_string` / `new_string` 这类 snake_case 参数。测试 28 → 36。
+- `0.1.8` — 让回填结果不会被覆盖：同一会话的记录文件可能同时被运行中的 host 和 `tools/backfill.mjs` 写，原来后写的会整文件替换。现在写盘前先比对 mtime，发现自己上次写完之后文件又被别人改过，就按 `callId + path` 把磁盘上的记录合并进来再写（测试里模拟了「外部追加一条记录后再保存」，37 个用例全过）。
+
+- `0.1.7` — 历史回填：旧会话不再空白。新增 `lib/history.js`（从会话日志重放 `tool/call` + `tool/result`，优先用 `dshFileReview` 的 `oldText`/`newText`，退一步用 `replace_string_in_file` 之类的参数对），服务端在第一次打开一个没有记录的旧会话时自动跑一遍并落盘；`tools/backfill.mjs` 可一次补完全部会话（`--dry` / `--only` / `--since`）。顺带把 diff 引擎抽到 `lib/diff.js`，并开始识别 `file_path` / `old_string` / `new_string` 这类 snake_case 参数。测试 28 → 37。
 
 - `0.1.6` — 每轮结束补上 Copilot 式页脚：一行 `已完成 81 步 · 用时 29m 36s +158 −55`，一行 `2 个文件已修改 +158 −55` 加右侧 **保留 / 撤销**。撤销只作用于这一轮（`revert-turn` 按时间窗回写），保留把这一轮的记录标成 kept 不再提供撤销；聊天区没有任何边框盒子，就是两行文字加两个小按钮。
 - `0.1.5` — 改名：包名 `dsh-live-diff` → **`dsh-copilot-diff`**（仓库、npm 同步）。插件行 id 变成 `copilot-diff`，连接频道 `/copilot-diff`，客户端 bundle id 与面板 id 一起改；旧的本地记录会自动从 `~/.dsh/live-diff/sessions/` 读一次（只读兼容），之后写到 `~/.dsh/copilot-diff/`。从旧包升级：`dsh plugin --profile web remove dsh-live-diff && dsh plugin --profile web add dsh-copilot-diff`。
