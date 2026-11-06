@@ -1,7 +1,7 @@
 {
-  "name": "dsh-live-diff",
-  "version": "0.1.4",
-  "description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: +A/-R on each edit row, a per-turn summary bar with Keep and Undo, and one-click undo for a single edit.",
+  "name": "dsh-copilot-diff",
+  "version": "0.1.5",
+  "description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: +A/-R on each edit row, a chronological review panel with every diff open, and one-click undo for a single edit.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -14,11 +14,11 @@
   "author": "huieric",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huieric/dsh-live-diff.git"
+    "url": "git+https://github.com/huieric/dsh-copilot-diff.git"
   },
-  "homepage": "https://github.com/huieric/dsh-live-diff#readme",
+  "homepage": "https://github.com/huieric/dsh-copilot-diff#readme",
   "bugs": {
-    "url": "https://github.com/huieric/dsh-live-diff/issues"
+    "url": "https://github.com/huieric/dsh-copilot-diff/issues"
   },
   "type": "module",
   "main": "lib/index.js",

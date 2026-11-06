@@ -1,4 +1,4 @@
-# dsh-live-diff
+# dsh-copilot-diff
 
 > Copilot 风格的行内 diff：DSH 里每一次改文件都当场显示 `+A −R`，点开就是差异内容；右侧审阅面板按时间顺序列出整轮每个文件（默认展开 diff），带 **Keep** 与 **Undo**。
 
@@ -39,7 +39,7 @@
 
 同类插件各自只覆盖一部分（下表来自这三个插件的官方对比）：
 
-| 能力 | change-review | diff-approval | file-changes | **dsh-live-diff** |
+| 能力 | change-review | diff-approval | file-changes | **dsh-copilot-diff** |
 | --- | --- | --- | --- | --- |
 | 每次修改自动追踪 | 支持 | 支持 | 支持 | **支持** |
 | 独立修改记录 | 支持 | 按文件聚合 | 按文件聚合 | **支持（按调用，一次可多文件）** |
@@ -47,7 +47,7 @@
 | 每轮 Diff 汇总 | 支持 | 否 | 支持 | **支持（含 +/− 统计）** |
 | 单次修改撤销 | 支持 | 按块撤销 | 否 | **支持（按记录，带冲突保护）** |
 | 会话累计审查 | 支持 | 支持 | 否 | **支持** |
-| npm 发布 | 否 | 是 | 未确认 | **是（`dsh-live-diff`）** |
+| npm 发布 | 否 | 是 | 未确认 | **是（`dsh-copilot-diff`）** |
 
 可以单独用，也可以和 `diff-approval` 同时装：后者管「改之前/之后」的审批，本插件管「改完了，摊开给你看、能一条条撤回」。两者都占 `tool.call.toolview` 的同一个 key 时，后注册的那一个生效；若只想保留其中一个，卸载另一个即可。
 
@@ -55,14 +55,14 @@
 
 ```bash
 # 从 npm（推荐）
-dsh plugin --profile web add dsh-live-diff
+dsh plugin --profile web add dsh-copilot-diff
 
 # 直接从 GitHub 装（pnpm 支持 git 依赖）
-dsh plugin --profile web add github:huieric/dsh-live-diff
+dsh plugin --profile web add github:huieric/dsh-copilot-diff
 
 # 或先 clone，再从本地目录装
-git clone https://github.com/huieric/dsh-live-diff.git
-dsh plugin --profile web add ./dsh-live-diff
+git clone https://github.com/huieric/dsh-copilot-diff.git
+dsh plugin --profile web add ./dsh-copilot-diff
 
 # 然后重启 web
 dsh web
@@ -78,10 +78,10 @@ dsh web
    pnpm 把 store 的操作锁放在 `$XDG_RUNTIME_DIR` 下；该目录不可写（容器、systemd 用户会话异常、或命令跑在受限沙箱里）时安装会直接失败。把锁指到可写目录即可：
 
    ```bash
-   XDG_RUNTIME_DIR="$HOME/.run" dsh plugin --profile web add dsh-live-diff
+   XDG_RUNTIME_DIR="$HOME/.run" dsh plugin --profile web add dsh-copilot-diff
    ```
 
-2. **装完不生效 / 启动摘要里 `live-diff (dsh-live-diff): …` 之后整条消失**
+2. **装完不生效 / 启动摘要里 `copilot-diff (dsh-copilot-diff): …` 之后整条消失**
    看 `dsh` 启动摘要里的 "did not activate" 一行，它写明了原因。`0.1.0` 曾漏声明 `webServer` 服务（`cannot get property "webServer" without inject`），`0.1.1` 已修复——升级即可。
 
 完全不依赖 pnpm 的安装方式（离线可用：复制文件 + 注册 bundle）：
@@ -101,7 +101,7 @@ dsh web
 
 ## 通道与存储
 
-服务端注册连接通道 `/live-diff`（`authority: trusted-host`），客户端只在**本地**通过它读数据：
+服务端注册连接通道 `/copilot-diff`（`authority: trusted-host`），客户端只在**本地**通过它读数据：
 
 | endpoint | 载荷 | 返回 |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ dsh web
 | `revert-all` | `{ sessionId }` | `{ reverted, failures[], ...summary }` |
 | `clear` | `{ sessionId }` | summary |
 
-记录落盘在 `${DSH_HOME:-~/.dsh}/live-diff/sessions/<session>.json`，每 session 最多保留 400 条（超出丢最旧的）。**文件正文会写进这个文件**（撤销要靠它），只是本地数据，不会发到网络。
+记录落盘在 `${DSH_HOME:-~/.dsh}/copilot-diff/sessions/<session>.json`，每 session 最多保留 400 条（超出丢最旧的）。**文件正文会写进这个文件**（撤销要靠它），只是本地数据，不会发到网络。
 
 ## 实现要点
 
@@ -127,10 +127,11 @@ dsh web
 - 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.4`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
+- 已发布到 npm：`npm i dsh-copilot-diff`（当前 `0.1.4`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
 
 ## 变更记录
 
+- `0.1.5` — 改名：包名 `dsh-live-diff` → **`dsh-copilot-diff`**（仓库、npm 同步）。插件行 id 变成 `copilot-diff`，连接频道 `/copilot-diff`，客户端 bundle id 与面板 id 一起改；旧的本地记录会自动从 `~/.dsh/live-diff/sessions/` 读一次（只读兼容），之后写到 `~/.dsh/copilot-diff/`。从旧包升级：`dsh plugin --profile web remove dsh-live-diff && dsh plugin --profile web add dsh-copilot-diff`。
 - `0.1.4` — 按截图反馈改了三处：① 审阅面板改成**正序**（和聊天区动作行同一顺序，原来是倒序）；② 面板里每个文件**默认展开 diff**，整条标题行都可以点（原来只有一个小三角能点，而且默认收起，看不到内容）；③ **去掉轮末那条汇总横条**（`N files changed · M edits +X −Y` + 查看/保留/全部撤销）——数字已经在面板顶部和会话行徽标里，聊天流里再摆一条是重复的噪音。
 - `0.1.3` — 让"换字符串"类调用也能看 diff。新增 `tools/pre-execute` 快照：对 `replace_string_in_file`、`multi_replace_string_in_file`、`edit_file`、`multi_edit`、`create_file`、`write_to_file` 在读参数里列出的文件之前先存一份原文，结果回来后再读一遍算 diff；服务端没有记录时客户端还会用参数里的 `oldString`/`newString`/`content` 现场画片段，所以**导入的历史会话、绕过工具管线的调用、插件热重载中途的调用都有 diff 可看**。toolview 注册键从 3 个扩到 9 个，动词补 `替换`/`Replaced`。
 
@@ -141,12 +142,12 @@ dsh web
 ## 开发
 
 ```bash
-git clone https://github.com/huieric/dsh-live-diff.git
-cd dsh-live-diff
+git clone https://github.com/huieric/dsh-copilot-diff.git
+cd dsh-copilot-diff
 npm test          # 22 个用例：diff 引擎 / 服务端记录与撤销 / 客户端渲染与注册
 ```
 
-- `lib/index.js` — 服务端：diff 引擎、每 session 的 `EditLog`、`/live-diff` 通道。
+- `lib/index.js` — 服务端：diff 引擎、每 session 的 `EditLog`、`/copilot-diff` 通道。
 - `lib/client.js` — 客户端：`tool.call.toolview`（9 个工具 key）、`sidebar.right.pane.tab`（`+ .title`）、`sidebar.workspaces.session.row.action` 与 `sidebar.session.row.hover`，手写 bundle，无构建步骤。
 - `tools/preview.mjs` — 把 `lib/client.js` 装进一个迷你的 hook 渲染器，用合成数据渲染出 `docs/preview.html`；`docs/screenshots/*.png` 就是它的截图。
 - `test/` — `node --test`。

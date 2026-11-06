@@ -1,4 +1,4 @@
 # Cordis patch: inserts this plugin's row into the profile's plugin tree.
 - insert:
-    - id: live-diff
-      name: 'dsh-live-diff'
+    - id: copilot-diff
+      name: 'dsh-copilot-diff'

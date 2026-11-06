@@ -242,7 +242,7 @@ var dictionaries = {};
 var connection = {
 	rpc: {
 		call: function (channel, endpoint, payload) {
-			if (channel !== "/live-diff") return Promise.resolve({ ok: false, error: { message: "wrong channel" } });
+			if (channel !== "/copilot-diff") return Promise.resolve({ ok: false, error: { message: "wrong channel" } });
 			if (endpoint === "detail") {
 				var callId = arguments.length > 2 && payload ? payload.callId : undefined;
 				return Promise.resolve({
@@ -307,7 +307,7 @@ function findBySlot(name) {
 }
 
 function buildPage(bundleCss) {
-	function t(key, vars) { return translate("live-diff", key, vars); }
+	function t(key, vars) { return translate("copilot-diff", key, vars); }
 	var Row = findBySlot("tool.call.toolview/edit");
 	var Pane = findBySlot("sidebar.right.pane.tab");
 	var Badge = findBySlot("sidebar.workspaces.session.row.action");
@@ -455,7 +455,7 @@ const page = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>dsh-live-diff preview</title>
+<title>dsh-copilot-diff preview</title>
 <style>${theme}</style>
 <style id="plugin-css"></style>
 </head>

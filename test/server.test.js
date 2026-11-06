@@ -105,7 +105,7 @@ function makeHost() {
 
 /** Run `fn` with an isolated DSH home. */
 async function withHome(fn) {
-	const dir = mkdtempSync(join(tmpdir(), "live-diff-"));
+	const dir = mkdtempSync(join(tmpdir(), "copilot-diff-"));
 	const previous = process.env.DSH_HOME;
 	process.env.DSH_HOME = dir;
 	try {
@@ -283,7 +283,7 @@ test("the log survives a restart", async () => {
 		await disposeFirst();
 
 		const persisted = JSON.parse(
-			readFileSync(join(dir, "live-diff", "sessions", "s1.json"), "utf8")
+			readFileSync(join(dir, "copilot-diff", "sessions", "s1.json"), "utf8")
 		);
 		assert.equal(persisted.records.length, 1);
 		assert.equal(persisted.records[0].path, "/work/a.js");

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install dsh-live-diff from this checkout into a DSH profile without pnpm.
+# Install dsh-copilot-diff from this checkout into a DSH profile without pnpm.
 #
 #   ./scripts/install-local.sh            # profile "web"
 #   ./scripts/install-local.sh myprofile  # another profile
@@ -25,7 +25,7 @@ done
 
 DEST="$DSH_HOME/profiles/$PROFILE"
 MANIFEST="$DEST/package.json"
-PKG="$DEST/node_modules/dsh-live-diff"
+PKG="$DEST/node_modules/dsh-copilot-diff"
 
 if [ ! -f "$MANIFEST" ]; then
 	echo "error: no DSH profile at $DEST" >&2
@@ -39,7 +39,7 @@ const { dirname, join } = require("node:path");
 
 const [manifestPath, src, pkgDir, removeFlag] = process.argv.slice(2);
 const remove = removeFlag === "1";
-const NAME = "dsh-live-diff";
+const NAME = "dsh-copilot-diff";
 
 const raw = require("node:fs").readFileSync(manifestPath, "utf8");
 const manifest = JSON.parse(raw);

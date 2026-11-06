@@ -138,7 +138,7 @@ function makeClientCtx(options = {}) {
 
 test("the bundle registers one module and exports apply + inject", () => {
 	const definition = loadBundle();
-	assert.equal(definition.id, "dsh-live-diff");
+	assert.equal(definition.id, "dsh-copilot-diff");
 	const exported = definition.factory((id) => {
 		if (id === "react") return react;
 		throw new Error(`unexpected require(${JSON.stringify(id)})`);
@@ -185,23 +185,23 @@ test("apply wires rows, the turn bar, the review panel, session badges and style
 	assert.equal(diffOn.length, 1);
 
 	assert.equal(tabTypes.length, 1);
-	assert.equal(tabTypes[0].kind, "live-diff");
-	assert.equal(tabTypes[0].id, "dsh-live-diff");
+	assert.equal(tabTypes[0].kind, "copilot-diff");
+	assert.equal(tabTypes[0].id, "dsh-copilot-diff");
 
 	const pane = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab");
 	assert.equal(pane.length, 1);
-	assert.equal(pane[0].spec.key, "dsh-live-diff");
+	assert.equal(pane[0].spec.key, "dsh-copilot-diff");
 	const paneTitle = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab.title");
 	assert.equal(paneTitle.length, 1);
 
 	const badge = registrations.filter((entry) => entry.slot === "sidebar.workspaces.session.row.action");
 	assert.equal(badge.length, 1);
-	assert.equal(badge[0].spec.id, "dsh-live-diff");
+	assert.equal(badge[0].spec.id, "dsh-copilot-diff");
 	const hover = registrations.filter((entry) => entry.slot === "sidebar.session.row.hover");
 	assert.equal(hover.length, 1);
 
-	assert.ok(dictionaries["live-diff"]?.zh?.["bar.files"], "zh dictionary registered");
-	assert.ok(dictionaries["live-diff"]?.en?.["panel.title"], "en dictionary registered");
+	assert.ok(dictionaries["copilot-diff"]?.zh?.["bar.files"], "zh dictionary registered");
+	assert.ok(dictionaries["copilot-diff"]?.en?.["panel.title"], "en dictionary registered");
 	assert.ok(exported.inject.includes("sidebarRightTabs"));
 });
 
@@ -258,7 +258,7 @@ test("the edit row is collapsed until asked, and its badge opens the review pane
 	const badge = findButton(collapsed, "ld-badge");
 	badge.props.onClick();
 	assert.equal(openedTabs.length, 1, "the stats button opens the review panel");
-	assert.equal(openedTabs[0].kind, "live-diff");
+	assert.equal(openedTabs[0].kind, "copilot-diff");
 
 	queue = [0, { revision: 3, totals: { edits: 2, files: 1, open: 2, openFiles: 1, added: 5, removed: 2 }, records: [record] }, false, false, null];
 test("an editor replace renders a diff from its arguments when the host recorded nothing", async () => {
