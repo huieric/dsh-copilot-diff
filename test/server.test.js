@@ -15,7 +15,7 @@ const SAVE_WAIT = 500;
  * inject`). The guard below turns that runtime rule into a test failure instead
  * of a bundle that installs cleanly and silently never activates.
  */
-const DECLARED = new Set([...inject, "logger", "on", "effect"]);
+const DECLARED = new Set([...inject, "logger", "on", "effect", "inject"]);
 
 function guarded(ctx) {
 	return new Proxy(ctx, {
@@ -43,6 +43,7 @@ function makeHost() {
 	const files = new Map();
 	const listeners = new Map();
 	let handle = null;
+	let workspaceChanges;
 	const fs = {
 		resolve: async (path) => ({ targetKey: path, displayPath: path }),
 		processPath: (target) => target.targetKey,
@@ -74,9 +75,16 @@ function makeHost() {
 			listeners.set(event, listener);
 			return () => listeners.delete(event);
 		},
-		effect: (fn) => fn()
+		effect: (fn) => fn(),
+		// Dynamic injection: run the callback now when the service is available,
+		// exactly like cordis does once `workspaceChanges` appears.
+		inject: (_deps, callback) => {
+			if (workspaceChanges !== undefined) callback({ ...ctx, workspaceChanges, logger: ctx.logger });
+			return () => {};
+		}
 	};
 	const emit = (exec, result) => listeners.get("tools/result")(exec, result);
+	const emitSessionEvent = (event) => listeners.get("session/event")({ id: "s1" }, event);
 	const preExec = (exec) => listeners.get("tools/pre-execute")(exec, async () => ({ kind: "allow" }));
 	/** Run a whole editor-style call: snapshot first, then the result. */
 	const run = async (name, callId, args, value) => {
@@ -87,8 +95,12 @@ function makeHost() {
 	return {
 		ctx: guarded(ctx),
 		files,
+		useWorkspaceChanges: (service) => {
+			workspaceChanges = service;
+		},
 		preExec,
 		run,
+		emitSessionEvent,
 		emitExec: (exec, value) => emit(exec, { isError: false, value }),
 		call: (endpoint, payload) => handle(endpoint, payload),
 		edit: (callId, path, before, after) =>
@@ -429,6 +441,72 @@ test("a created file is recorded as an addition without a before side", async ()
 		assert.equal(record.after, "first\nsecond\n");
 		assert.equal(record.created, true);
 		assert.equal(record.added, 2);
+	});
+});
+
+test("a turn summary fills in files a shell command changed", async () => {
+	await withHome(async () => {
+		const host = makeHost();
+		host.useWorkspaceChanges({
+			summary: () => ({
+				turn: 2,
+				cwd: "/work",
+				files: [
+					{ path: "src/a.js", display: "src/a.js", added: 2, deleted: 1 },
+					{ path: "notes.md", display: "notes.md", added: 1, deleted: 0 }
+				],
+				total: 2,
+				added: 3,
+				deleted: 1
+			}),
+			diff: async (_sessionId, _seq, index) =>
+				index === 0
+					? {
+							kind: "text",
+							path: "src/a.js",
+							display: "src/a.js",
+							before: true,
+							after: true,
+							coarse: false,
+							hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: ["-one", "+one", "+two"] }]
+						}
+					: {
+							kind: "text",
+							path: "notes.md",
+							display: "notes.md",
+							before: false,
+							after: true,
+							coarse: false,
+							hunks: [{ oldStart: 1, oldLines: 0, newStart: 1, newLines: 1, lines: ["+hello"] }]
+						}
+		});
+		const dispose = await apply(host.ctx);
+		host.files.set("/work/a.js", "one\n");
+		await host.edit("c1", "/work/a.js", "one\n", "one\ntwo\n");
+		// The Host announces the turn's snapshot; a tool edit already explains a.js.
+		const listeners = [];
+		void listeners;
+		host.emitSessionEvent({ type: "turn/start", seq: 1, time: Date.now() - 1000, data: { turn: 2 } });
+		host.emitSessionEvent({
+			type: "workspace/changes",
+			seq: 2,
+			time: Date.now(),
+			data: { turn: 2 }
+		});
+		await new Promise((resolve) => setTimeout(resolve, 30));
+
+		const listed = await host.call("list", { sessionId: "s1" });
+		const paths = listed.value.records.map((record) => record.path);
+		assert.deepEqual(paths, ["/work/a.js", "src/a.js", "notes.md"]);
+		const shell = listed.value.records.filter((record) => record.tool === "workspace");
+		assert.equal(shell.length, 2);
+		assert.equal(shell[0].state, "kept");
+		assert.equal(shell[1].created, true);
+		const detail = await host.call("detail", { sessionId: "s1", callId: "workspace:2" });
+		assert.equal(detail.value.records.length, 2);
+		assert.equal(detail.value.records[0].hunks[0].lines.join("|"), "-one|+one|+two");
+		assert.equal(listed.value.totals.added, 4);
+		dispose();
 	});
 });
 
