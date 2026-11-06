@@ -18,8 +18,10 @@ try {
   await page.waitForLoadState('networkidle');
   await page.locator('.ld-fileitem').first().click();
   await page.locator('.ld-pane .ld-text').first().waitFor();
+  await page.getByRole('button', { name: /Keep (?:Turn 1|第 1 轮)/ }).waitFor();
   const text = await page.locator('.ld-pane').innerText();
   assert.ok(text.length > 100, 'review pane must contain actual code');
+  assert.match(text, /Turn 1|第 1 轮/, 'footer must select this turn rather than entire session');
   await mkdir('output/playwright', { recursive: true });
   await page.screenshot({ path: 'output/playwright/copilot-review.png', fullPage: true });
   await page.getByRole('button', { name: /^(Side by side|并排视图)$/ }).click();

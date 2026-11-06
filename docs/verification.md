@@ -5,8 +5,9 @@ Development branch: `feat/copilot-review-checkpoints`, isolated checkout `dsh-co
 ## Verified
 
 - Baseline `npm test`: 41/41 pass.
-- First integrated implementation: 63/63 pass. Independent reviews found additional state-transition and cross-session gaps; final fixes and expanded test result are recorded at completion.
+- First integrated implementation: 63/63 pass. Independent reviews found additional state-transition and cross-session gaps; final fixes add regressions for these cases. The final expanded suite result is recorded below at completion.
 - `node --check` client/checkpoint/browser/host-smoke sources, `git diff --check` passed for initial integrated branch.
+- Bounded home-workspace capture measurement: approximately 1.2 seconds, 980 discovered entries, 4.8 MB captured UTF-8 text, target dsh-copilot-diff repository included. This is a local measurement, not a latency guarantee; specific project workspaces are faster.
 - npm package dry-run includes `lib/checkpoints.js` plus every imported runtime module; archive extraction and ESM import of server entry succeeded. Local installer also passed against a disposable profile under output/install-check; bundle registration and server import verified without changing the active profile.
 - Browser synthetic fixture: clicked a footer file, confirmed nonempty actual code diff in scoped pane, switched split mode, next-file navigation and Restore confirmation. No page errors. Fixture is visibly labelled synthetic and uses invented code/data; its counts are not a real session measurement.
 - Screenshot files are generated under `output/playwright/`; reusable browser procedure is `tools/browser-smoke.mjs` using an existing CDP browser. The original existing browser tab is preserved.
