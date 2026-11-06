@@ -345,7 +345,88 @@ test("the pending phase renders a placeholder row", async () => {
 	assert.match(textOf(row), /b\.js/);
 });
 
-test("the turn footer reports steps, duration and the change count like Copilot", async () => {
+test("the turn header carries this turn's totals on the completed line", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx, registrations, openedTabs } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: () => {} },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	const Node = registrations.find(
+		(entry) => entry.slot === "conversation.chat.node" && entry.spec.key === "turn-process"
+	).component;
+	const turn = {
+		status: "closed",
+		start: { time: 1000 },
+		end: { time: 1000 + 65_000, data: { reason: { kind: "completed" } } }
+	};
+	const inside = { ...record, time: 30_000 };
+	const t = (key, fallback) => (key === "chinese.marker" ? "en" : fallback ?? key);
+	const opened = [];
+	const props = {
+		node: { location: { kind: "turn", turn } },
+		turnProcess: { foldable: true, hasContent: true, open: false, setOpen: (next) => opened.push(next) },
+		sessionId: "s1",
+		t
+	};
+
+	// useSessionRecords: the payload, then its effect.
+	queue = [{ records: [inside] }];
+	const view = Node(props);
+	const text = textOf(view);
+	assert.match(text, /Completed in 1m 5s/, "the completed line carries the duration");
+	assert.match(text, /\+1/);
+	assert.match(text, /−1/);
+
+	findButton(view, "ld-processbadge").props.onClick({ stopPropagation() {} });
+	assert.equal(openedTabs[0]?.kind, "copilot-diff", "the totals open the review panel");
+
+	findButton(view, "ld-processlabel").props.onClick({ stopPropagation() {} });
+	assert.deepEqual(opened, [true], "the row still collapses and expands the process");
+
+	queue = [{ records: [{ ...inside, time: 90_000 }] }];
+	const empty = Node({ ...props, node: { location: { kind: "turn", turn: { ...turn, start: { time: 200_000 }, end: { time: 210_000, data: { reason: { kind: "completed" } } } } } } });
+	assert.doesNotMatch(textOf(empty), /\+\d/, "a turn that changed nothing shows no totals");
+});
+
+test("the turn header speaks Chinese when the dictionary is bound", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx, registrations } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: () => {} },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	const Node = registrations.find(
+		(entry) => entry.slot === "conversation.chat.node" && entry.spec.key === "turn-process"
+	).component;
+	const turn = {
+		status: "closed",
+		start: { time: 1000 },
+		end: { time: 1000 + 65_000, data: { reason: { kind: "completed" } } }
+	};
+	const zh = { "chinese.marker": "中文", "node.took": "已完成，用时 {duration}" };
+	const t = (key, fallback) => zh[key] ?? fallback ?? key;
+	queue = [{ records: [{ ...record, time: 30_000 }] }];
+	const view = Node({
+		node: { location: { kind: "turn", turn } },
+		turnProcess: { foldable: false, hasContent: true, open: true, setOpen: () => {} },
+		sessionId: "s1",
+		t
+	});
+	assert.match(textOf(view), /已完成，用时 1分5秒/);
+});
+
+test("the turn footer keeps the change count and both actions", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
 	const { ctx, registrations } = makeClientCtx();
@@ -358,11 +439,7 @@ test("the turn footer reports steps, duration and the change count like Copilot"
 	delete globalThis.document;
 
 	const Footer = registrations.find((entry) => entry.slot === "conversation.chat.turnTail").component;
-	const turn = {
-		start: { time: 1000 },
-		end: { time: 1000 + 65_000 },
-		steps: [{}, {}, {}]
-	};
+	const turn = { start: { time: 1000 }, end: { time: 1000 + 65_000 }, steps: [{}, {}, {}] };
 	const insideTurn = { ...record, time: 30_000 };
 	const t = (key, fallback) => fallback ?? key;
 
@@ -370,14 +447,14 @@ test("the turn footer reports steps, duration and the change count like Copilot"
 	queue = [0, { records: [insideTurn] }, false, null];
 	const footer = Footer({ turn, sessionId: "s1", t });
 	const text = textOf(footer);
-	assert.match(text, /Completed 3 steps in 1m 5s/, "the completed line carries steps and duration");
 	assert.match(text, /1 files changed/, "the bar counts distinct files");
 	assert.match(text, /\+1/);
 	assert.match(text, /−1/);
+	assert.doesNotMatch(text, /Completed/, "the completed line lives on the turn header, not here");
 	assert.ok(findButton(footer, "ld-turnbar"), "the keep/undo bar is present");
 	assert.ok(findButton(footer, "ld-btn"), "Keep and Undo are buttons");
 
-	queue = [0, { records: [{ ...record, time: 30_000 }] }, false, null];
+	queue = [0, { records: [] }, false, null];
 	const other = Footer({ turn: { start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
 	assert.equal(other, null, "a turn that changed nothing renders no footer");
 });
