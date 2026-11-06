@@ -135,7 +135,7 @@ function makeClientCtx(options = {}) {
 	const totals = options.totals ?? { edits: 0 };
 	const ctx = {
 		get: (name) => {
-			if (name === "connection") return { rpc: { call: async () => ({ ok: true, value: { totals, records: [] } }) } };
+			if (name === "connection") return { rpc: { call: options.rpc ?? (async () => ({ ok: true, value: { totals, records: [] } })) } };
 			if (name === "sidebarRight") return { openTab: (kind, opts) => void openedTabs.push({ kind, opts }) };
 			if (name === "sidebarRightTabs") return { register: (spec) => void tabTypes.push(spec) };
 			return undefined;
@@ -398,7 +398,7 @@ test("the turn header carries this turn's totals on the completed line", async (
 	};
 
 	// useSessionRecords: the payload, then its effect.
-	queue = [{ records: [inside] }];
+	queue = [{ key: "s1", value: { records: [inside] } }];
 	const view = Node(props);
 	const text = textOf(view);
 	assert.match(text, /Completed in 1m 5s/, "the completed line carries the duration");
@@ -411,7 +411,7 @@ test("the turn header carries this turn's totals on the completed line", async (
 	findButton(view, "ld-processlabel").props.onClick({ stopPropagation() {} });
 	assert.deepEqual(opened, [true], "the row still collapses and expands the process");
 
-	queue = [{ records: [{ ...inside, time: 90_000 }] }];
+	queue = [{ key: "s1", value: { records: [{ ...inside, time: 90_000 }] } }];
 	const empty = Node({ ...props, node: { location: { kind: "turn", turn: { ...turn, start: { time: 200_000 }, end: { time: 210_000, data: { reason: { kind: "completed" } } } } } } });
 	assert.doesNotMatch(textOf(empty), /\+\d/, "a turn that changed nothing shows no totals");
 });
@@ -444,7 +444,7 @@ test("the expanded turn lists its file rows and the footer lists the files", asy
 		sessionId: "s1",
 		t
 	};
-	queue = [payload];
+	queue = [{ key: "s1", value: payload }];
 	const view = Node(props);
 	const rows = collectNodes(view, "ld-trow");
 	assert.equal(rows.length, 1, "one row per edit in the turn");
@@ -456,7 +456,7 @@ test("the expanded turn lists its file rows and the footer lists the files", asy
 	const Footer = registrations.find(
 		(entry) => entry.slot === "conversation.chat.turnTail"
 	).component;
-	queue = [0, payload, false, null];
+	queue = [0, { key: "s1", value: payload }, false, null];
 	const footer = Footer({ turn, sessionId: "s1", t });
 	const items = collectNodes(footer, "ld-fileitem");
 	assert.equal(items.length, 1, "the footer lists the changed files");
@@ -485,7 +485,7 @@ test("the turn header speaks Chinese when the dictionary is bound", async () => 
 	};
 	const zh = { "chinese.marker": "中文", "node.took": "已完成，用时 {duration}" };
 	const t = (key, fallback) => zh[key] ?? fallback ?? key;
-	queue = [{ records: [{ ...record, time: 30_000 }] }];
+	queue = [{ key: "s1", value: { records: [{ ...record, time: 30_000 }] } }];
 	const view = Node({
 		node: { location: { kind: "turn", turn } },
 		turnProcess: { foldable: false, hasContent: true, open: true, setOpen: () => {} },
@@ -513,7 +513,7 @@ test("the turn footer keeps the change count and both actions", async () => {
 	const t = (key, fallback) => fallback ?? key;
 
 	// useRevision, data, busy, notice
-	queue = [0, { records: [insideTurn] }, false, null];
+	queue = [0, { key: "s1", value: { records: [insideTurn] } }, false, null];
 	const footer = Footer({ turn, sessionId: "s1", t });
 	const text = textOf(footer);
 	assert.match(text, /1 files changed/, "the bar counts distinct files");
@@ -523,7 +523,128 @@ test("the turn footer keeps the change count and both actions", async () => {
 	assert.ok(findButton(footer, "ld-turnbar"), "the keep/undo bar is present");
 	assert.ok(findButton(footer, "ld-btn"), "Keep and Undo are buttons");
 
-	queue = [0, { records: [] }, false, null];
+	queue = [0, { key: "s1", value: { records: [] } }, false, null];
 	const other = Footer({ turn: { start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
 	assert.equal(other, null, "a turn that changed nothing renders no footer");
+});
+
+/** A small hook runner executes effects and re-renders the actual registered component. */
+function hookRunner() {
+	let slots = [], cursor = 0, effects = [], cleanups = [];
+	const depsEqual = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+	const hooks = {
+		...react,
+		useState(initial) {
+			const i = cursor++;
+			if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial;
+			return [slots[i], (value) => { slots[i] = typeof value === "function" ? value(slots[i]) : value; }];
+		},
+		useRef(initial) { const i = cursor++; return slots[i] ??= { current: initial }; },
+		useCallback(fn) { cursor++; return fn; },
+		useEffect(fn, deps) {
+			const i = cursor++;
+			if (!depsEqual(slots[i], deps)) { slots[i] = deps; effects.push(() => { cleanups[i]?.(); cleanups[i] = fn(); }); }
+		}
+	};
+	return { hooks, render(Component, props) { cursor = 0; const result = Component(props); for (const effect of effects.splice(0)) effect(); return result; }, dispose() { cleanups.forEach((fn) => fn?.()); } };
+}
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+async function setupHooks(rpc) {
+	const runner = hookRunner();
+	const exported = loadBundle().factory(() => runner.hooks);
+	const services = makeClientCtx({ rpc });
+	await exported.apply(services.ctx);
+	return { ...runner, ...services, pane: services.registrations.find((entry) => entry.slot === "sidebar.right.pane.tab").component, footer: services.registrations.find((entry) => entry.slot === "conversation.chat.turnTail").component };
+}
+
+test("footer file opens numeric turn scope, loads full hunks, navigates and scopes actions", async () => {
+	const requests = [];
+	const records = [{ ...record, turn: 7, time: 999999 }, { ...record, id: "e2", path: "/work/b.js", turn: 7 }];
+	const payload = { root: "/work", records, checkpoints: [], totals: { edits: 2 } };
+	const ui = await setupHooks(async (_channel, endpoint, payloadArg) => {
+		requests.push({ endpoint, payload: payloadArg });
+		return { ok: true, value: payload };
+	});
+	const turn = { turn: 7, start: { time: 1000, data: { turn: 7 } }, end: { time: 2000 } };
+	ui.render(ui.footer, { turn, sessionId: "s1" }); await settle();
+	const foot = ui.render(ui.footer, { turn, sessionId: "s1" });
+	assert.equal(collectNodes(foot, "ld-fileitem").length, 2, "numeric turn wins over timestamps");
+	findButton(foot, "ld-fileitem").props.onClick();
+	assert.equal(ui.openedTabs.length, 1);
+	// Mount pane in another runner to give it independent hooks.
+	const paneRun = hookRunner();
+	Object.assign(ui.hooks, paneRun.hooks);
+	paneRun.render(ui.pane, { sessionId: "s1" }); await settle();
+	let pane = paneRun.render(ui.pane, { sessionId: "s1" });
+	assert.ok(requests.some((r) => r.endpoint === "review-turn" && r.payload.turn === 7));
+	assert.match(textOf(pane), /was here/);
+	const buttons = collectNodes(pane, "ld-btn");
+	await buttons.find((b) => b.props["aria-label"] === "Keep Turn 7").props.onClick();
+	assert.ok(requests.some((r) => r.endpoint === "keep-turn" && r.payload.turn === 7));
+	paneRun.render(ui.pane, { sessionId: "s1" }); await settle();
+	buttons.find((b) => b.props["aria-label"] === "Next file").props.onClick();
+	pane = paneRun.render(ui.pane, { sessionId: "s1" });
+	assert.equal(findButton(pane, "ld-select").props.value, "/work/b.js");
+	collectNodes(pane, "ld-btn").find((b) => textOf(b) === "Side by side").props.onClick();
+	pane = paneRun.render(ui.pane, { sessionId: "s1" });
+	assert.match(textOf(pane), /now here/);
+	assert.equal(collectNodes(pane, "ld-btn").find((b) => b.props["aria-label"] === "Next file").props.disabled, true);
+	paneRun.dispose(); ui.dispose();
+});
+
+test("all changes hydrate summary bodies and stale replies cannot leak across sessions", async () => {
+	let resolveOld;
+	const requests = [];
+	const ui = await setupHooks(async (_channel, endpoint, payload) => {
+		requests.push(endpoint);
+		if (payload.sessionId === "old") return new Promise((resolve) => { resolveOld = resolve; });
+		if (endpoint === "detail") return { ok: true, value: { records: [{ ...record, hunks: record.hunks.map(({ rows, ...h }) => ({ ...h, lines: rows })) }] } };
+		return { ok: true, value: { records: [{ ...record, hunks: undefined }] } };
+	});
+	ui.render(ui.pane, { sessionId: "old" });
+	let view = ui.render(ui.pane, { sessionId: "new" });
+	assert.doesNotMatch(textOf(view), /was here/);
+	await settle();
+	view = ui.render(ui.pane, { sessionId: "new" });
+	assert.match(textOf(view), /was here/);
+	assert.ok(requests.includes("detail"));
+	resolveOld({ ok: true, value: { records: [{ ...record, path: "OLD-SESSION" }] } }); await settle();
+	assert.doesNotMatch(textOf(ui.render(ui.pane, { sessionId: "new" })), /OLD-SESSION/);
+	ui.dispose();
+});
+
+test("checkpoint prefix is unavailable historically and requires explicit files-only confirmation", async () => {
+	const requests = [];
+	const ui = await setupHooks(async (_channel, endpoint, payload) => { requests.push({ endpoint, payload }); return { ok: true, value: { records: [] } }; });
+	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
+	const turn = { turn: 3, status: "closed", start: { data: { turn: 3 }, time: 1 }, end: { time: 2 } };
+	let view = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn }, data: { turn: 3, messageCount: 2 } }, turnProcess: { foldable: true, hasContent: true, open: false } });
+	const checkpointElement = view.props.children[0];
+	const run = hookRunner(); Object.assign(ui.hooks, run.hooks);
+	let checkpoint = run.render(checkpointElement.type, checkpointElement.props);
+	assert.equal(findButton(checkpoint, "ld-btn").props.disabled, true);
+	const props = { ...checkpointElement.props, payload: { checkpoints: [{ turn: 3, status: "ready", limitations: [] }] } };
+	checkpoint = run.render(checkpointElement.type, props);
+	findButton(checkpoint, "ld-btn").props.onClick();
+	assert.equal(requests.filter((r) => r.endpoint === "restore-checkpoint").length, 0);
+	checkpoint = run.render(checkpointElement.type, props);
+	assert.match(textOf(checkpoint), /before turn 3.*subsequent captured changes.*Only files/);
+	await collectNodes(checkpoint, "ld-btn").find((button) => textOf(button) === "Restore").props.onClick();
+	assert.deepEqual(requests.find((r) => r.endpoint === "restore-checkpoint").payload, { sessionId: "s1", turn: 3 });
+	run.dispose(); ui.dispose();
+});
+
+
+test("ok:true partial mutation failures remain visible in the pane", async () => {
+	const ui = await setupHooks(async (_channel, endpoint) => {
+		if (endpoint === "revert-all") return { ok: true, value: { failures: [{ path: "/work/src/a.js", message: "changed externally" }] } };
+		return { ok: true, value: { records: [record] } };
+	});
+	ui.render(ui.pane, { sessionId: "s1" }); await settle();
+	let view = ui.render(ui.pane, { sessionId: "s1" });
+	await collectNodes(view, "ld-btn").find((button) => button.props["aria-label"] === "Undo All changes").props.onClick();
+	view = ui.render(ui.pane, { sessionId: "s1" }); await settle();
+	view = ui.render(ui.pane, { sessionId: "s1" });
+	assert.match(textOf(view), /a.js: changed externally/);
+	ui.dispose();
 });
