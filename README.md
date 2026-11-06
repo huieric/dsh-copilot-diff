@@ -33,6 +33,7 @@
 | 单次撤销 | 每条记录自己的 Undo：只把这一次编辑替换掉的文本写回，不影响同文件的其他编辑 |
 | 冲突保护 | 只有当磁盘内容仍等于该次编辑的 `after` 时才写回；否则拒绝，并提示先撤销更新的那次——绝不吞掉后来的改动 |
 | 会话累计 | 记录按 session 持久化，重开页面/重连后仍在；面板列出整轮的全部编辑 |
+| 历史会话回填 | 插件装上之前发生的修改也能补出 diff：打开一个旧会话时，服务端从该会话自己的 `session.v4.jsonl(.zstd)` 日志里重放 `tool/call` + `tool/result`，把当时改过的文件、增删行数、diff 正文补成同样的记录（状态标为「已保留」，不提供撤销——历史无法诚实回滚）。想看全量统计可以一次性跑 `node tools/backfill.mjs` |
 | 零依赖、零构建 | 服务端是纯 ESM，客户端是手写 module-loader bundle，`npm test` 用 `node --test` |
 
 ### 与现有三个插件的关系
@@ -99,6 +100,21 @@ dsh web
 - **保留**：审阅面板顶部的 `Keep` 把整轮标记为已看过（不写文件，只是把记录标记为 `kept`，从待审查里移出）。旁边的 `Undo all` 按逆序回滚整轮，跳过有冲突的记录，并在需要时报告哪些没撤成。
 - **打开面板**：点动作行的 `+A −R` 打开审阅面板并定位到那一次修改；点侧边栏图标直接打开整轮的审查视图。
 
+### 旧会话里的修改
+
+插件只能记录它加载之后发生的事，所以装之前那些会话原本是空白的。实际上数据一直都在：每个会话的 `~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl(.zstd)` 里存着全部 `tool/call` 与 `tool/result`，其中文件改动大多自带前后文本（`dshFileReview` 元数据里的 `oldText`/`newText`，或 `replace_string_in_file` 参数里的 `oldString`/`newString`）。
+
+- **自动**：打开一个没有记录的旧会话时，服务端会读它自己的日志、补出记录并落盘，一次会话读一次；聊天里的动作行、右侧面板、会话行徽标、轮末页脚同时就有了数字。
+- **批量**：想在会话列表第一眼就看到全部数字，可以一次性跑完：
+
+```bash
+node tools/backfill.mjs            # 全部会话
+node tools/backfill.mjs --dry      # 只报告，不写文件
+node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
+```
+
+补出来的记录 `state` 是 `kept`：它们是历史，按钮只给「已保留」，不给撤销——旧会话的磁盘内容早就和当时不同了。跑完请重启 `dsh web`，因为运行中的 host 内存里还留着旧副本。
+
 ## 通道与存储
 
 服务端注册连接通道 `/copilot-diff`（`authority: trusted-host`），客户端只在**本地**通过它读数据：
@@ -124,12 +140,15 @@ dsh web
 
 ## 已知限制
 
-- 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
+- 覆盖 `edit` / `write` / `apply_patch`，以及 `replace_string_in_file` / `multi_replace_string_in_file` / `edit_file` / `multi_edit` / `create_file` / `write_to_file`；还认 `str_replace_editor`。shell 里的 `sed`/`cat >` 不追踪。
+- 历史回填依赖会话日志里能拿到前后文本：`apply_patch` 只写补丁、`dshFileReview` 元数据又缺失时，这条调用补不出来。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 已发布到 npm：`npm i dsh-copilot-diff`（当前 `0.1.4`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
+- 已发布到 npm：`npm i dsh-copilot-diff`（当前 `0.1.7`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
 
 ## 变更记录
+
+- `0.1.7` — 历史回填：旧会话不再空白。新增 `lib/history.js`（从会话日志重放 `tool/call` + `tool/result`，优先用 `dshFileReview` 的 `oldText`/`newText`，退一步用 `replace_string_in_file` 之类的参数对），服务端在第一次打开一个没有记录的旧会话时自动跑一遍并落盘；`tools/backfill.mjs` 可一次补完全部会话（`--dry` / `--only` / `--since`）。顺带把 diff 引擎抽到 `lib/diff.js`，并开始识别 `file_path` / `old_string` / `new_string` 这类 snake_case 参数。测试 28 → 36。
 
 - `0.1.6` — 每轮结束补上 Copilot 式页脚：一行 `已完成 81 步 · 用时 29m 36s +158 −55`，一行 `2 个文件已修改 +158 −55` 加右侧 **保留 / 撤销**。撤销只作用于这一轮（`revert-turn` 按时间窗回写），保留把这一轮的记录标成 kept 不再提供撤销；聊天区没有任何边框盒子，就是两行文字加两个小按钮。
 - `0.1.5` — 改名：包名 `dsh-live-diff` → **`dsh-copilot-diff`**（仓库、npm 同步）。插件行 id 变成 `copilot-diff`，连接频道 `/copilot-diff`，客户端 bundle id 与面板 id 一起改；旧的本地记录会自动从 `~/.dsh/live-diff/sessions/` 读一次（只读兼容），之后写到 `~/.dsh/copilot-diff/`。从旧包升级：`dsh plugin --profile web remove dsh-live-diff && dsh plugin --profile web add dsh-copilot-diff`。
