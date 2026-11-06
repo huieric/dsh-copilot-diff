@@ -1,6 +1,6 @@
 {
   "name": "dsh-copilot-diff",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Copilot-style inline diffs for every file edit in DeepSeek Harness: a collapsed row per edit with +A/-R, a turn footer with steps, duration and Keep/Undo, and a review panel that lists every changed file.",
   "keywords": [
     "dsh",

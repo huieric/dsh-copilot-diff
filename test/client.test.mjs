@@ -71,6 +71,28 @@ function findButton(node, name) {
 	return findButton(node.props?.children, name);
 }
 
+/**
+ * Every element whose class list contains `name`.
+ * @param node - rendered tree.
+ * @param name - class name.
+ * @returns matching elements in document order.
+ */
+function collectNodes(node, name) {
+	const found = [];
+	const walk = (current) => {
+		if (current === null || current === undefined || typeof current !== "object") return;
+		if (Array.isArray(current)) {
+			for (const child of current) walk(child);
+			return;
+		}
+		const classes = String(current.props?.className ?? "").split(/\s+/);
+		if (classes.includes(name)) found.push(current);
+		walk(current.props?.children);
+	};
+	walk(node);
+	return found;
+}
+
 /** One stored record shaped like the server's. */
 const record = {
 	id: "e1",
@@ -392,6 +414,53 @@ test("the turn header carries this turn's totals on the completed line", async (
 	queue = [{ records: [{ ...inside, time: 90_000 }] }];
 	const empty = Node({ ...props, node: { location: { kind: "turn", turn: { ...turn, start: { time: 200_000 }, end: { time: 210_000, data: { reason: { kind: "completed" } } } } } } });
 	assert.doesNotMatch(textOf(empty), /\+\d/, "a turn that changed nothing shows no totals");
+});
+
+test("the expanded turn lists its file rows and the footer lists the files", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx, registrations, openedTabs } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: () => {} },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	const Node = registrations.find(
+		(entry) => entry.slot === "conversation.chat.node" && entry.spec.key === "turn-process"
+	).component;
+	const turn = {
+		status: "closed",
+		start: { time: 1000 },
+		end: { time: 1000 + 65_000, data: { reason: { kind: "completed" } } }
+	};
+	const t = (key, fallback) => (key === "chinese.marker" ? "en" : fallback ?? key);
+	const payload = { root: "/repo", records: [{ ...record, time: 30_000, added: 4, removed: 2 }] };
+	const props = {
+		node: { location: { kind: "turn", turn } },
+		turnProcess: { foldable: false, hasContent: true, open: true, setOpen: () => {} },
+		sessionId: "s1",
+		t
+	};
+	queue = [payload];
+	const view = Node(props);
+	const rows = collectNodes(view, "ld-trow");
+	assert.equal(rows.length, 1, "one row per edit in the turn");
+	assert.match(textOf(rows[0]), /Edited/, "the row carries the verb");
+	assert.match(textOf(rows[0]), /\+4/);
+	findButton(view, "ld-trow").props.onClick({ stopPropagation() {} });
+	assert.equal(openedTabs[0]?.kind, "copilot-diff", "a row opens the same panel as its totals");
+
+	const Footer = registrations.find(
+		(entry) => entry.slot === "conversation.chat.turnTail"
+	).component;
+	queue = [0, payload, false, null];
+	const footer = Footer({ turn, sessionId: "s1", t });
+	const items = collectNodes(footer, "ld-fileitem");
+	assert.equal(items.length, 1, "the footer lists the changed files");
+	assert.match(textOf(items[0]), /\+4/);
 });
 
 test("the turn header speaks Chinese when the dictionary is bound", async () => {
