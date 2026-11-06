@@ -13,6 +13,7 @@
  *   node tools/backfill.mjs --only=<text>   # only sessions whose id contains <text>
  *   node tools/backfill.mjs --since=2026-10-01
  *   node tools/backfill.mjs --home=/other/.dsh
+ *   node tools/backfill.mjs --no-git        # skip the commit-history pass
  *
  * Restart `dsh web` afterwards: a running host keeps its copy of a session in
  * memory and writes it back over the files this script just produced.
@@ -22,14 +23,17 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
 	findSessionLog,
+	gitRecordsForTurn,
 	readSessionEvents,
 	recordsFromEvents,
-	sessionFileName
+	reposUnder,
+	sessionFileName,
+	turnWindows
 } from "../lib/history.js";
 
 /**
  * Options from argv.
- * @returns `{ dry, only, since, home }`.
+ * @returns `{ dry, git, only, since, home }`.
  */
 function options() {
 	const argv = process.argv.slice(2);
@@ -39,6 +43,7 @@ function options() {
 	};
 	const since = read("since");
 	return {
+		git: !argv.includes("--no-git"),
 		dry: argv.includes("--dry"),
 		only: read("only"),
 		since: since === undefined ? undefined : Date.parse(`${since}T00:00:00`),
@@ -119,11 +124,44 @@ for (const { workspace, sessionId } of sessionsOnDisk(root)) {
 		}
 	}
 	const { records, added } = recordsFromEvents(events, existing);
-	if (added === 0) continue;
+	let gitAdded = 0;
+	if (conf.git) {
+		// A turn whose files changed through a shell command has no tool record,
+		// but its work still sits in the repository commits made inside the turn.
+		const cwd = typeof events[0]?.cwd === "string" ? events[0].cwd : process.cwd();
+		const repos = reposUnder(cwd);
+		if (repos.length > 0) {
+			const windows = turnWindows(events);
+			for (const window of windows) {
+				const busy = records.some(
+					(record) => typeof record.time === "number" && record.time >= window.from && record.time <= window.to
+				);
+				if (busy) continue;
+				const seenPaths = new Set();
+				for (const repo of repos) {
+					const found = gitRecordsForTurn(repo, window, cwd, records.length + 1);
+					for (const record of found.records) {
+						if (seenPaths.has(record.path)) continue;
+						seenPaths.add(record.path);
+						records.push(record);
+						gitAdded += 1;
+					}
+				}
+			}
+			if (gitAdded > 0) {
+				records.sort((left, right) => (left.time ?? 0) - (right.time ?? 0));
+				if (records.length > 400) records.splice(0, records.length - 400);
+				records.forEach((record, index) => {
+					record.id = record.source === "git" ? `g${index + 1}` : record.id;
+				});
+			}
+		}
+	}
+	if (added + gitAdded === 0) continue;
 	touched += 1;
-	totalAdded += added;
+	totalAdded += added + gitAdded;
 	totalStored += records.length;
-	report.push({ session: sessionId, workspace, added, total: records.length });
+	report.push({ session: sessionId, workspace, added: added + gitAdded, total: records.length });
 	if (!conf.dry) writeSession(stateFile, records, Math.max(existing.length, records.length));
 }
 

@@ -152,6 +152,18 @@ node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
 ## 已知限制
 
 - shell 命令改的文件由宿主 `workspace/changes` 快照补上，需要该轮跑完（`turn/end`）才出现；这类记录只读，不能单条撤销。
+- 已经跑完的旧轮次：宿主的内存快照已丢，只能用 git 提交回溯（`tools/backfill.mjs` 默认开启，或用 `--no-git` 关掉）。所以「没有提交、又不在 git 仓库里」的 shell 改动无法还原。
+
+### 补全历史轮次
+
+```bash
+# 一次性把历史会话的 diff 都补上（工具记录 + git 提交回溯）
+npx dsh-copilot-diff 2>/dev/null || node tools/backfill.mjs
+# 只看报告不写盘
+node tools/backfill.mjs --dry
+```
+
+跑完重启 `dsh web`。git 回溯只扫会话工作目录下第一层的仓库（跳过 node_modules/thirdparty 这类目录），所以 `~/某仓库/...` 里的改动能被补上，`/tmp` 里的临时脚本补不上。
 
 
 - 覆盖 `edit` / `write` / `apply_patch`，以及 `replace_string_in_file` / `multi_replace_string_in_file` / `edit_file` / `multi_edit` / `create_file` / `write_to_file`；还认 `str_replace_editor`。shell 里的 `sed`/`cat >` 不追踪。
@@ -162,6 +174,7 @@ node tools/backfill.mjs --only=<会话 id 片段> --since=2026-10-01
 
 ## 变更记录
 
+- `0.1.13` — 历史轮次也能有 diff：会话加载（或 `tools/backfill.mjs`）时，如果一轮没有任何工具记录，就用该轮时间窗内的 git 提交重建逐文件 diff（来源标为 git，只读）。这样「用 bash/python 改的文件」的老轮次也能看到数字。
 - `0.1.12` — 用宿主每轮的 `workspace/changes` 快照补课：shell 命令（python/`sed`/脚本）改的文件以前完全看不到，现在出现在同一轮的逐文件列表里（来源标为 workspace，只读不可撤销）；已有工具级记录的文件不重复计入。
 - `0.1.11` — 没有工作区根目录的会话（导入或回填的历史）也把绝对路径收成 `…/最后三段`，行内不会再被整段路径挤掉。
 - `0.1.10` — 三处对齐 Copilot：①「已完成，用时 …」行上的 `+A −R` 可点开侧边面板；② 展开这轮后，每个改动文件占一行（`已编辑 <相对路径> +A −R`，点行直接定位到面板里对应的 diff）；③ 轮末 `N 个文件已修改 +A −R` 旁的文件名默认展开成逐文件 `+/−` 列表，**保留** 恒可点、**撤销** 只在还有未保留记录时可点。工作区根目录由服务端下发，路径显示为相对路径。
