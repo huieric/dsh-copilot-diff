@@ -41,14 +41,14 @@
 | 每轮 Diff 汇总 | 支持 | 否 | 支持 | **支持（含 +/− 统计）** |
 | 单次修改撤销 | 支持 | 按块撤销 | 否 | **支持（按记录，带冲突保护）** |
 | 会话累计审查 | 支持 | 支持 | 否 | **支持** |
-| npm 发布 | 否 | 是 | 未确认 | 见下 |
+| npm 发布 | 否 | 是 | 未确认 | **是（`dsh-live-diff`）** |
 
 可以单独用，也可以和 `diff-approval` 同时装：后者管「改之前/之后」的审批，本插件管「改完了，摊开给你看、能一条条撤回」。两者都占 `tool.call.toolview` 的同一个 key 时，后注册的那一个生效；若只想保留其中一个，卸载另一个即可。
 
 ## 安装
 
 ```bash
-# 从 npm（发布后）
+# 从 npm（推荐）
 dsh plugin --profile web add dsh-live-diff
 
 # 直接从 GitHub 装（pnpm 支持 git 依赖）
@@ -119,7 +119,7 @@ dsh web
 - 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- npm 包名 `dsh-live-diff` 已在仓库里就绪，发布状态见仓库 Release。
+- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.1`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
 
 ## 变更记录
 
