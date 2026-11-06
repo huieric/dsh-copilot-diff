@@ -5,7 +5,7 @@ Development branch: `feat/copilot-review-checkpoints`, isolated checkout `dsh-co
 ## Verified
 
 - Baseline `npm test`: 41/41 pass.
-- Final `npm test`: **77 passed / 0 failed**, exit 0, approximately 5.1 seconds. This expands baseline 41 tests and first integrated 63 tests with explicit review regressions. Covers real sed/Python workspaces, restart/Keep/Restore, original Undo CAS and typed errors, historical turn windows, mixed hydration, async session navigation, persisted schema/limits and polling races.
+- Final `npm test`: **78 passed / 0 failed**, exit 0, approximately 5.1 seconds. This expands baseline 41 tests and first integrated 63 tests with explicit review regressions. Covers real sed/Python workspaces, restart/Keep/Restore, original Undo CAS and typed errors, historical turn windows, mixed hydration, async session navigation, persisted schema/limits and polling races.
 - `node --check` client/checkpoint/browser/host-smoke sources, `git diff --check` passed for initial integrated branch.
 - Bounded home-workspace capture measurement: approximately 1.2 seconds, 980 discovered entries, 4.8 MB captured UTF-8 text, target dsh-copilot-diff repository included. This is a local measurement, not a latency guarantee; specific project workspaces are faster.
 - npm package dry-run includes `lib/checkpoints.js` plus every imported runtime module; archive extraction and ESM import of server entry succeeded. Local installer also passed against a disposable profile under output/install-check; bundle registration and server import verified without changing the active profile.
