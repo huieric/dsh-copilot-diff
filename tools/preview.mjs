@@ -309,7 +309,6 @@ function findBySlot(name) {
 function buildPage(bundleCss) {
 	function t(key, vars) { return translate("live-diff", key, vars); }
 	var Row = findBySlot("tool.call.toolview/edit");
-	var Bar = findBySlot("conversation.chat.turnTail");
 	var Pane = findBySlot("sidebar.right.pane.tab");
 	var Badge = findBySlot("sidebar.workspaces.session.row.action");
 	var common = { cwd: "/work/product", home: "/home/dev", openFile: function () {}, t: t };
@@ -357,8 +356,7 @@ function buildPage(bundleCss) {
 		),
 		createElement("main", { className: "pv-chat" },
 			createElement("div", { className: "pv-msg" }, "把 interval checker 的重算逻辑改成按区间批处理，配置路径改成从环境变量读。"),
-			createElement("div", { className: "pv-rows" }, rows),
-			Bar === undefined ? null : createElement(Bar, { sessionId: "s1", cwd: common.cwd, home: common.home, openFile: common.openFile, t: t })
+			createElement("div", { className: "pv-rows" }, rows)
 		),
 		createElement("section", { className: "pv-pane" },
 			createElement("div", { className: "pv-panehead" }, "变更"),
@@ -399,7 +397,7 @@ function boot() {
 	buildPage(css);
 	if (location.search.indexOf("expand") >= 0) {
 		setTimeout(function () {
-			var match = /expand=(\\d+)/.exec(location.search);
+			var match = /expand=(\d+)/.exec(location.search);
 			var index = match === null ? 0 : Number(match[1]) - 1;
 			var toggles = document.querySelectorAll(".ld-toggle");
 			if (toggles[index]) toggles[index].click();

@@ -179,8 +179,10 @@ test("apply wires rows, the turn bar, the review panel, session badges and style
 	}
 
 	const bar = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
-	assert.equal(bar.length, 1);
-	assert.equal(bar[0].spec.id, "dsh-live-diff");
+	assert.equal(bar.length, 0, "the turn summary bar is gone: the panel and the session badge carry those numbers");
+
+	const diffOn = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab");
+	assert.equal(diffOn.length, 1);
 
 	assert.equal(tabTypes.length, 1);
 	assert.equal(tabTypes[0].kind, "live-diff");
@@ -306,14 +308,6 @@ test("an editor replace renders a diff from its arguments when the host recorded
 	assert.match(openedText, /two/, "expanding shows the removed fragment");
 });
 
-	const Bar = registrations.find((entry) => entry.spec.name === "conversation.chat.turnTail").component;
-	const bar = Bar({ sessionId: "s1", cwd: "/work", home: "/home/u", openFile: () => {}, t });
-	const barText = textOf(bar);
-	assert.match(barText, /1 files changed/);
-	assert.match(barText, /\+5/);
-	assert.match(barText, /−2/);
-	assert.match(barText, /Keep/);
-	assert.match(barText, /Undo all/);
 });
 
 test("the pending phase renders a placeholder row", async () => {

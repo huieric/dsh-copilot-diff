@@ -1,6 +1,6 @@
 # dsh-live-diff
 
-> Copilot 风格的行内 diff：DSH 里每一次改文件都当场显示 `+A −R` 和差异内容，轮末给一条 `N files changed +X −Y` 汇总条，带 **Keep** 与 **Undo**。
+> Copilot 风格的行内 diff：DSH 里每一次改文件都当场显示 `+A −R`，点开就是差异内容；右侧审阅面板按时间顺序列出整轮每个文件（默认展开 diff），带 **Keep** 与 **Undo**。
 
 一个 DeepSeek Harness 的 web 插件。它不拦截、不代理任何模型调用——只是观察已经成功的 `edit` / `write` / `apply_patch` 结果，把「这一次调用改了什么」独立记成一条，然后在聊天流里就地渲染。
 
@@ -29,10 +29,10 @@
 | 默认收起 | 每条记录只占一行摘要，不会把聊天流撑成一片 diff；点行首 `>` 展开 |
 | 点开审阅 | 点 `+A −R` 打开右侧审阅面板，并滚动定位到这一次修改 |
 | 会话列表统计 | 侧边栏每个会话行下方显示该会话累计的 `+A −R` |
-| 轮末汇总条 | `N files changed · M edits  +X −Y`，带 **Review / Keep / Undo all**；收起过程后它仍然在 |
+| 审阅面板 | 右侧面板按**时间顺序**（与聊天区一致）列出整轮每个文件，每个文件**默认展开 diff**；顶部是 `N files changed · M edits +X −Y` 与 **Keep / Undo all**；点击任意条目标题行即可收起/展开 |
 | 单次撤销 | 每条记录自己的 Undo：只把这一次编辑替换掉的文本写回，不影响同文件的其他编辑 |
 | 冲突保护 | 只有当磁盘内容仍等于该次编辑的 `after` 时才写回；否则拒绝，并提示先撤销更新的那次——绝不吞掉后来的改动 |
-| 会话累计 | 记录按 session 持久化，重开页面/重连后仍在；Review 面板列出整轮的全部编辑 |
+| 会话累计 | 记录按 session 持久化，重开页面/重连后仍在；面板列出整轮的全部编辑 |
 | 零依赖、零构建 | 服务端是纯 ESM，客户端是手写 module-loader bundle，`npm test` 用 `node --test` |
 
 ### 与现有三个插件的关系
@@ -43,7 +43,7 @@
 | --- | --- | --- | --- | --- |
 | 每次修改自动追踪 | 支持 | 支持 | 支持 | **支持** |
 | 独立修改记录 | 支持 | 按文件聚合 | 按文件聚合 | **支持（按调用，一次可多文件）** |
-| 实时变更面板 | 支持 | 支持 | 轮末展示 | **支持（轮末汇总条 + Review 面板）** |
+| 实时变更面板 | 支持 | 支持 | 轮末展示 | **支持（右侧审阅面板 + 会话行徽标）** |
 | 每轮 Diff 汇总 | 支持 | 否 | 支持 | **支持（含 +/− 统计）** |
 | 单次修改撤销 | 支持 | 按块撤销 | 否 | **支持（按记录，带冲突保护）** |
 | 会话累计审查 | 支持 | 支持 | 否 | **支持** |
@@ -96,8 +96,8 @@ dsh web
 - **看**：每条改文件的动作行右侧就是 `+A −R`，行首的 `>` 展开这一次的 diff。点文件名在编辑器打开该文件，点「Show N more lines」展开完整补丁。
 - **审阅**：点 `+A −R`，右侧边栏打开审阅面板并按调用分组列出本次会话的全部改动，定位到你点的那一条；面板里可以逐条撤销，也可以保留/回滚全部。
 - **撤销一条**：动作行右侧的 `Undo`。它把这次编辑替换掉的原文写回；如果这之后磁盘又被改过（无论谁改的），它会拒绝并说明原因。
-- **保留**：轮末汇总条的 `Keep` 把整轮标记为已看过（不写文件，只是把记录标记为 `kept`，从待审查里移出）。`Keep` 旁边是 `Undo all`，按逆序回滚整轮，跳过有冲突的记录，并在需要时报告哪些没撤成。
-- **Review**：轮末汇总条的 `Review` 按钮同样打开审阅面板（不指定定位）。
+- **保留**：审阅面板顶部的 `Keep` 把整轮标记为已看过（不写文件，只是把记录标记为 `kept`，从待审查里移出）。旁边的 `Undo all` 按逆序回滚整轮，跳过有冲突的记录，并在需要时报告哪些没撤成。
+- **打开面板**：点动作行的 `+A −R` 打开审阅面板并定位到那一次修改；点侧边栏图标直接打开整轮的审查视图。
 
 ## 通道与存储
 
@@ -127,10 +127,11 @@ dsh web
 - 只覆盖 `edit` / `write` / `apply_patch`。`str_replace_editor` 与 shell 里的 `sed` 之类不追踪（没有可信的 before/after）。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.3`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
+- 已发布到 npm：`npm i dsh-live-diff`（当前 `0.1.4`）。首次发布时 registry 会先出现一个 `0.0.0-stage` 占位版本，属正常现象，不影响安装。
 
 ## 变更记录
 
+- `0.1.4` — 按截图反馈改了三处：① 审阅面板改成**正序**（和聊天区动作行同一顺序，原来是倒序）；② 面板里每个文件**默认展开 diff**，整条标题行都可以点（原来只有一个小三角能点，而且默认收起，看不到内容）；③ **去掉轮末那条汇总横条**（`N files changed · M edits +X −Y` + 查看/保留/全部撤销）——数字已经在面板顶部和会话行徽标里，聊天流里再摆一条是重复的噪音。
 - `0.1.3` — 让"换字符串"类调用也能看 diff。新增 `tools/pre-execute` 快照：对 `replace_string_in_file`、`multi_replace_string_in_file`、`edit_file`、`multi_edit`、`create_file`、`write_to_file` 在读参数里列出的文件之前先存一份原文，结果回来后再读一遍算 diff；服务端没有记录时客户端还会用参数里的 `oldString`/`newString`/`content` 现场画片段，所以**导入的历史会话、绕过工具管线的调用、插件热重载中途的调用都有 diff 可看**。toolview 注册键从 3 个扩到 9 个，动词补 `替换`/`Replaced`。
 
 - `0.1.2` — 改成 Copilot 的读法：动作行默认收起，点 `>` 才展开 diff；`+A −R` 变成按钮，点开右侧审阅面板并定位到这次修改；轮末汇总条在收起过程后仍然可见；侧边栏会话行新增该会话累计的 `+A −R` 徽标（新增 `summaries` 批量端点，5 秒一轮，只查可见会话）。顺带修了两个只在真实 locale 下才炸的问题：把回退文案当插值参数传给 `t()`（模板含 `{}` 时 `name in params` 抛错），以及窄面板里按钮文字被挤成竖排。
@@ -146,7 +147,7 @@ npm test          # 22 个用例：diff 引擎 / 服务端记录与撤销 / 客�
 ```
 
 - `lib/index.js` — 服务端：diff 引擎、每 session 的 `EditLog`、`/live-diff` 通道。
-- `lib/client.js` — 客户端：`tool.call.toolview`（`edit`/`write`/`apply_patch` 三个 key）、`conversation.chat.turnTail`、`sidebar.right.pane.tab`（`+ .title`）、`sidebar.workspaces.session.row.action` 与 `sidebar.session.row.hover`，手写 bundle，无构建步骤。
+- `lib/client.js` — 客户端：`tool.call.toolview`（9 个工具 key）、`sidebar.right.pane.tab`（`+ .title`）、`sidebar.workspaces.session.row.action` 与 `sidebar.session.row.hover`，手写 bundle，无构建步骤。
 - `tools/preview.mjs` — 把 `lib/client.js` 装进一个迷你的 hook 渲染器，用合成数据渲染出 `docs/preview.html`；`docs/screenshots/*.png` 就是它的截图。
 - `test/` — `node --test`。
 
