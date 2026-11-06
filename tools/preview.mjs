@@ -297,7 +297,7 @@ function makeContext() {
 	return {
 		get: function (name) {
 			if (name === "connection") return connection;
-			if (name === "sidebarRight") return { openTab: function () {} };
+			if (name === "sidebarRight") return { mounted: { getSnapshot: function () { return "s1"; }, subscribe: function () { return function () {}; } }, openTab: function () {} };
 			if (name === "sidebarRightTabs") return { register: function () { return function () {}; } };
 			return undefined;
 		},

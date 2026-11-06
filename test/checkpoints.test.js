@@ -209,3 +209,65 @@ test("oversized early files do not exhaust budget before later source files", as
 		assert.match(captured.files["a-huge"].error, /Oversized/);
 	});
 });
+
+
+test("full Restore inspects reverted paths and refuses an inconsistent selected baseline before writes", async () => {
+ await fixture(async ({root, cp, writes}) => {
+  writeFileSync(join(root,"a"),"A"); writeFileSync(join(root,"b"),"x");
+  await cp.start(1); writeFileSync(join(root,"a"),"B"); await cp.end(1);
+  await cp.start(2); writeFileSync(join(root,"a"),"C"); writeFileSync(join(root,"b"),"y"); await cp.end(2);
+  await cp.restore(2,r=>r.turn===2 && r.path==="a");
+  await cp.restore(1,r=>r.turn===1 && r.path==="a");
+  const count=writes.length;
+  assert.ok((await cp.restore(2)).conflict);
+  assert.equal(writes.length,count); assert.equal(readFileSync(join(root,"b"),"utf8"),"y");
+ });
+});
+test("full Restore still checks external changes on an already undone path", async () => {
+ await fixture(async ({root,cp,writes}) => {
+  writeFileSync(join(root,"a"),"A"); await cp.start(1); writeFileSync(join(root,"a"),"B"); await cp.end(1);
+  await cp.restore(1,()=>true); writeFileSync(join(root,"a"),"external");
+  const count=writes.length; assert.ok((await cp.restore(1)).conflict); assert.equal(writes.length,count);
+ });
+});
+test("scoped Undo ignores unrelated earlier unavailable capture", async () => {
+ await fixture(async ({root,cp}) => {
+  cp.turns.push({turn:0,time:0,status:"unavailable",records:[],limitations:["No root"]});
+  writeFileSync(join(root,"a"),"A"); await cp.start(1); writeFileSync(join(root,"a"),"B"); await cp.end(1);
+  assert.equal((await cp.restore(1,r=>r.turn===1)).restored,1);
+ });
+});
+test("malformed persisted snapshots refuse adoption without overwriting history", async () => {
+ for (const corrupt of [c=>{c.records=null;},c=>{c.records[0].path="../escape";},c=>{c.records[0].before=42;},c=>{c.before.files.a=42;}]) {
+  await fixture(async ({root,cp,options}) => {
+   writeFileSync(join(root,"a"),"A"); await cp.start(1); writeFileSync(join(root,"a"),"B"); await cp.end(1);
+   const saved=JSON.parse(readFileSync(cp.file,"utf8")); corrupt(saved.turns[0]);
+   const invalid=JSON.stringify(saved); writeFileSync(cp.file,invalid);
+   const next=new Checkpoints("s",options);
+   assert.match(next.summaries()[0].limitations[0],/unreadable/);
+   await next.start(2); await next.end(2);
+   assert.equal(next.records().length,0); assert.ok((await next.restore(1)).conflict);
+   assert.equal(readFileSync(cp.file,"utf8"),invalid);
+  });
+ }
+});
+test("history file size is checked before parse and repeated acquisition cutoff metadata stays bounded", async () => {
+ await fixture(async ({cp,options}) => {
+  await cp.start(1); await cp.end(1);
+  // Small cap stands in for a sparse/oversized history, with no giant allocation.
+  const next=new Checkpoints("s",{...options,limits:{historyBytes:1}});
+  assert.match(next.summaries()[0].limitations[0],/byte limit/);
+ });
+ await fixture(async ({cp,options}) => {
+  for(let turn=1;turn<=1000;turn++){await cp.start(turn);await cp.end(turn);}
+  assert.equal(cp.turns.length,2); assert.deepEqual(cp.coverage,{from:3,to:1000});
+  const next=new Checkpoints("s",options); assert.deepEqual(next.coverage,cp.coverage);
+  assert.ok((await next.restore(1)).conflict);
+ },{turns:2});
+});
+test("file replaced by empty directory reports unsupported type instead of a restorable deletion", async () => {
+ await fixture(async ({root,cp})=>{
+  writeFileSync(join(root,"a"),"A");await cp.start(1);rmSync(join(root,"a"));mkdirSync(join(root,"a"));await cp.end(1);
+  assert.equal(cp.records().length,0); assert.ok(cp.summaries()[0].limitations.some(s=>/a:.*Directory/.test(s)));
+ });
+});

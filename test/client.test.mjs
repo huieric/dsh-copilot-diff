@@ -132,11 +132,16 @@ function makeClientCtx(options = {}) {
 	const styles = [];
 	const tabTypes = [];
 	const openedTabs = [];
-	const totals = options.totals ?? { edits: 0 };
+	let mountedId = options.mountedId ?? "s1";
+ const mountedListeners = new Set();
+ const mounted = {getSnapshot:()=>mountedId,subscribe:fn=>{mountedListeners.add(fn);return ()=>mountedListeners.delete(fn);}};
+ const mount = id => {mountedId=id;for(const fn of [...mountedListeners])fn();};
+ const totals = options.totals ?? { edits: 0 };
 	const ctx = {
 		get: (name) => {
 			if (name === "connection") return { rpc: { call: options.rpc ?? (async () => ({ ok: true, value: { totals, records: [] } })) } };
-			if (name === "sidebarRight") return { openTab: (kind, opts) => void openedTabs.push({ kind, opts }) };
+			if (name === "sidebarRight") return { mounted, openTab: (kind, opts) => void openedTabs.push({ kind, opts, sessionId:mountedId }) };
+			if (name === "uiWorkspace") return options.noNavigation ? undefined : {openSession: options.openSession ?? mount};
 			if (name === "sidebarRightTabs") return { register: (spec) => void tabTypes.push(spec) };
 			return undefined;
 		},
@@ -155,7 +160,7 @@ function makeClientCtx(options = {}) {
 			}
 		}
 	};
-	return { ctx, registrations, dictionaries, styles, tabTypes, openedTabs };
+	return { ctx, registrations, dictionaries, styles, tabTypes, openedTabs, mount };
 }
 
 test("the bundle registers one module and exports apply + inject", () => {
@@ -549,10 +554,10 @@ function hookRunner() {
 	return { hooks, render(Component, props) { cursor = 0; const result = Component(props); for (const effect of effects.splice(0)) effect(); return result; }, dispose() { cleanups.forEach((fn) => fn?.()); } };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-async function setupHooks(rpc) {
+async function setupHooks(rpc, options = {}) {
 	const runner = hookRunner();
 	const exported = loadBundle().factory(() => runner.hooks);
-	const services = makeClientCtx({ rpc });
+	const services = makeClientCtx({ rpc, ...options });
 	await exported.apply(services.ctx);
 	return { ...runner, ...services, pane: services.registrations.find((entry) => entry.slot === "sidebar.right.pane.tab").component, footer: services.registrations.find((entry) => entry.slot === "conversation.chat.turnTail").component };
 }
@@ -690,4 +695,53 @@ test("polling cannot cancel reverse-order call undo or hide its deferred failure
 	pane = run.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(pane), /external conflict/);
 	run.dispose(); rowRun.dispose(); ui.dispose();
+});
+
+
+test("mixed call hydration renders only exact visible list identities while inline detail stays full", async()=>{
+ const covered={...record,id:"hidden-original",path:"/work/a"};
+ const secret={...record,id:"secret",path:"/work/.env"};
+ const net={...record,id:"checkpoint:1:a",callId:"checkpoint:1",path:"a",turn:1};
+ const ui=await setupHooks(async(_c,endpoint,payload)=>({ok:true,value:{records:endpoint==="detail" ? payload.callId==="c1"?[covered,secret]:[net] : [{...secret,hunks:undefined},{...net,hunks:undefined}]}}));
+ ui.render(ui.pane,{sessionId:"s1"});await settle();const view=ui.render(ui.pane,{sessionId:"s1"});
+ assert.equal(findButton(view,"ld-select").props.children.length,2);
+ assert.doesNotMatch(textOf(view),/hidden-original/);assert.match(textOf(view),/2 files/);ui.dispose();
+});
+test("numeric historical footer carries the same bounded window into review and Keep",async()=>{
+ const requests=[];const old={...record,time:150};
+ const ui=await setupHooks(async(_c,endpoint,payload)=>{requests.push({endpoint,payload});return {ok:true,value:{records:[old]}};});
+ const props={sessionId:"s1",turn:{turn:1,start:{time:100,data:{turn:1}},end:{time:200}}};
+ ui.render(ui.footer,props);await settle();const footer=ui.render(ui.footer,props);
+ findButton(footer,"ld-fileitem").props.onClick();
+ const run=hookRunner();Object.assign(ui.hooks,run.hooks);run.render(ui.pane,{sessionId:"s1"});await settle();
+ const pane=run.render(ui.pane,{sessionId:"s1"});assert.match(textOf(pane),/was here/);
+ const request=requests.find(r=>r.endpoint==="review-turn");assert.deepEqual(request.payload,{sessionId:"s1",turn:1,from:100,to:200,callId:undefined});
+ await collectNodes(pane,"ld-btn").find(b=>b.props["aria-label"]==="Keep Turn 1").props.onClick();
+ assert.deepEqual(requests.find(r=>r.endpoint==="keep-turn").payload,{sessionId:"s1",turn:1,from:100,to:200});
+ run.dispose();ui.dispose();
+});
+test("badge waits for asynchronously mounted target session and normal switches clear stale focus",async()=>{
+ for(const initial of ["A",undefined]){
+  const navigations=[],requests=[];
+  const ui=await setupHooks(async(_c,endpoint,payload)=>{requests.push({endpoint,payload});if(endpoint==="summaries")return {ok:true,value:{sums:{B:{files:1,edits:1,added:1,removed:1}}}};return {ok:true,value:{records:[{...record,path:payload.sessionId+"-file"}],totals:{files:1,edits:1,added:1,removed:1}}};},{mountedId:initial===undefined?null:initial,openSession:id=>navigations.push(id)});
+  if(initial===undefined)ui.mount(undefined);
+  const Badge=ui.registrations.find(e=>e.slot==="sidebar.workspaces.session.row.action").component;
+  queue=[{files:1,edits:1,added:1,removed:1}];
+  // Seed the real totals hook via its async batch, while the pane uses an independent runner.
+  ui.render(Badge,{sessionId:"B"});await settle();
+  const badge=ui.render(Badge,{sessionId:"B"});assert.ok(badge);
+  badge.props.onClick({stopPropagation(){}});assert.deepEqual(navigations,["B"]);assert.equal(ui.openedTabs.length,0);
+  ui.mount("B");assert.equal(ui.openedTabs[0].sessionId,"B");
+  const run=hookRunner();Object.assign(ui.hooks,run.hooks);run.render(ui.pane,{sessionId:"B"});await settle();
+  let pane=run.render(ui.pane,{sessionId:"B"});assert.match(textOf(pane),/B-file/);assert.doesNotMatch(textOf(pane),/A-file/);
+  await collectNodes(pane,"ld-btn").find(b=>b.props["aria-label"]==="Keep All changes").props.onClick();
+  assert.equal(requests.find(r=>r.endpoint==="keep-all").payload.sessionId,"B");
+  ui.mount("A");run.render(ui.pane,{sessionId:"A"});await settle();pane=run.render(ui.pane,{sessionId:"A"});assert.match(textOf(pane),/A-file/);assert.doesNotMatch(textOf(pane),/B-file/);
+  run.dispose();ui.dispose();queue=[];
+ }
+});
+test("badge without navigation support safely declines cross-session open",async()=>{
+ const exported=loadBundle().factory(()=>react);const ui=makeClientCtx({noNavigation:true,mountedId:"A"});await exported.apply(ui.ctx);
+ const Badge=ui.registrations.find(e=>e.slot==="sidebar.workspaces.session.row.action").component;
+ queue=[{files:1,edits:1,added:1,removed:1}];const badge=Badge({sessionId:"B"});badge.props.onClick({stopPropagation(){}});assert.equal(ui.openedTabs.length,0);queue=[];
 });
