@@ -108,9 +108,16 @@ function synthesizeText(entry) {
 			if (row.new !== null && row.new !== undefined) after[row.new - 1] = row.s;
 		});
 	});
-	entry.before = oldMax === 0 ? "" : before.join("\n") + "\n";
-	entry.after = newMax === 0 ? "" : after.join("\n") + "\n";
+	var padOld = Math.max(entry.pad || 0, oldMax);
+	var padNew = Math.max(entry.padNew || entry.pad || 0, newMax);
+	for (var k = oldMax + 1; k <= padOld; k++) before.push("    // line " + k);
+	for (var m = newMax + 1; m <= padNew; m++) after.push("    // line " + m);
+	entry.before = oldMax === 0 && padOld === 0 ? "" : before.join("\n") + "\n";
+	entry.after = newMax === 0 && padNew === 0 ? "" : after.join("\n") + "\n";
 }
+// A large file proves the pane only mounts the rows that are on screen.
+ENTRIES[3].pad = 1200;
+ENTRIES[3].padNew = 1201;
 ENTRIES.forEach(function (entry) { if (entry.id !== "e1") synthesizeText(entry); });
 // One edit carries full before/after text, so the pane can show the whole file
 // with folded unchanged regions instead of only the hunk.
@@ -250,8 +257,15 @@ function renderNode(node, parent, path) {
 			var name = prop === "viewBox" ? "viewBox" : prop.replace(/[A-Z]/g, function (letter) { return "-" + letter.toLowerCase(); });
 			if (value !== false && value !== null && value !== undefined) element.setAttribute(name, String(value));
 		}
-		else if (prop === "onClick" || prop === "onChange") {
-			element.addEventListener(prop === "onClick" ? "click" : "change", function (event) { value(event); });
+		else if (prop === "style" && value !== null && typeof value === "object") {
+			Object.keys(value).forEach(function (key) {
+				var css = String(value[key]);
+				element.style[key] = /^\d+(\.\d+)?$/.test(css) ? css + "px" : css;
+			});
+		}
+		else if (prop === "onClick" || prop === "onChange" || prop === "onScroll") {
+			var eventName = prop === "onClick" ? "click" : prop === "onChange" ? "change" : "scroll";
+			element.addEventListener(eventName, function (event) { value(event); });
 		} else if (prop === "disabled") {
 			if (value) element.setAttribute("disabled", "");
 		} else if (value === undefined || value === null || value === false) return;

@@ -27,12 +27,13 @@ try {
   assert.ok(text.length > 100, 'review pane must contain actual code');
   assert.match(text, /Turn 1|第 1 轮/, 'footer must select this turn rather than entire session');
   assert.match(text, /unchanged lines|行未改动/, 'whole-file view folds untouched regions');
+  await mkdir('output/playwright', { recursive: true });
+  await page.screenshot({ path: 'output/playwright/copilot-review.png', fullPage: true });
   const folded = text.length;
   await page.locator('.ld-pane .ld-gap').first().click();
   await page.locator('.ld-pane .ld-gap.open').first().waitFor();
   assert.ok((await page.locator('.ld-pane').innerText()).length > folded, 'opening a gap reveals hidden lines');
-  await mkdir('output/playwright', { recursive: true });
-  await page.screenshot({ path: 'output/playwright/copilot-review.png', fullPage: true });
+  await page.screenshot({ path: 'output/playwright/copilot-review-context.png', fullPage: true });
 
   // Side-by-side mode and file switching.
   await page.getByRole('button', { name: /^(Side by side|并排)$/ }).click();
@@ -41,22 +42,39 @@ try {
   await page.locator('.ld-frow').nth(1).click();
   await page.waitForFunction((previous) => document.querySelector('.ld-editorpath')?.innerText !== previous, firstPath);
   assert.notEqual(await page.locator('.ld-editorpath').innerText(), firstPath, 'file list switches the diff');
+  await page.screenshot({ path: 'output/playwright/copilot-review-split.png', fullPage: true });
 
-  // An expanded turn shows the diff where the edit happened, not a detached list.
-  await page.locator('.ld-inline .ld-difflines').first().waitFor();
-  assert.ok((await page.locator('.ld-inline').first().innerText()).includes('SlotRotator'), 'inline row keeps file context');
-  const inlineCount = await page.locator('.ld-inline').count();
-  await page.locator('.ld-trow').first().click({ position: { x: 8, y: 12 } });
-  await page.waitForFunction((count) => document.querySelectorAll('.ld-inline').length === count - 1, inlineCount);
-  await page.locator('.ld-trow').first().click({ position: { x: 8, y: 12 } });
-  await page.waitForFunction((count) => document.querySelectorAll('.ld-inline').length === count, inlineCount);
-  await page.locator('.ld-inline .ld-difflines').first().waitFor();
+  // The turn header must not grow a detached list of edits: the real edit row
+  // renders at its tool call, in the order the host produced it.
+  assert.equal(await page.locator('.ld-trow').count(), 0, 'no aggregated edit list in the turn header');
+  await page.locator('.pv-rows .ld-toggle').first().click();
+  await page.locator('.ld-diff .ld-difflines').first().waitFor();
+  assert.ok((await page.locator('.ld-diff').first().innerText()).includes('SlotRotator'), 'inline row keeps file context');
+  await page.screenshot({ path: 'output/playwright/copilot-inline.png', fullPage: true });
+
+  // Whole-file virtualization: expanding every gap mounts a 1200-line file but
+  // only the visible window exists in the DOM.
+  await page.locator('.ld-frow').nth(3).click();
+  await page.getByRole('button', { name: /^(Inline|统一)$/ }).click();
+  await page.getByRole('button', { name: /^(Expand unchanged|展开未改动)$/ }).click();
+  const scroller = page.locator('.ld-pane .ld-difflines.ld-vscroll').first();
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.ld-pane .ld-difflines.ld-vscroll');
+    return el !== null && el.querySelectorAll('.ld-line').length > 0;
+  });
+  const metrics = await scroller.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, rows: el.querySelectorAll('.ld-line').length, cls: el.className, text: el.innerText.slice(0, 80) }));
+  assert.ok(metrics.scrollHeight > 15000, 'the whole 1200-line file is scrollable');
+  assert.ok(metrics.rows < 300, `virtualized DOM stays bounded (saw ${metrics.rows} rows)`);
+  await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(150);
+  assert.match(await scroller.innerText(), /line 1200/, 'scrolling reaches the untouched tail');
+  await page.screenshot({ path: 'output/playwright/copilot-review-virtual.png', fullPage: true });
 
   // Checkpoint stays a quiet link until pressed, then asks for confirmation.
   await page.getByRole('button', { name: 'Restore checkpoint before turn 1', exact: true }).click();
   await page.locator('.ld-confirm').waitFor();
   assert.match(await page.locator('.ld-confirm').innerText(), /conversation|对话/);
-  await page.screenshot({ path: 'output/playwright/copilot-review-split.png', fullPage: true });
+  await page.screenshot({ path: 'output/playwright/copilot-checkpoint.png', fullPage: true });
   assert.deepEqual(errors, [], 'fixture must not throw browser errors');
   console.log(JSON.stringify({ fixture: 'synthetic', codeVisible: true, inlineDiff: true, pageErrors: errors, screenshot: 'output/playwright/copilot-review.png' }));
 } finally {

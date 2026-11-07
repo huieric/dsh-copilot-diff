@@ -4,21 +4,23 @@
 
 一个 DeepSeek Harness Web 插件。文件工具保留逐调用 diff；新的逐轮工作区快照按磁盘实际变化识别 `sed`、Python `replace`、脚本及其它命令行修改，提供轮级净改动和持久化检查点。它不调用模型。快照范围和排除项会显示在检查点处；超出覆盖范围的文件不会假装可以恢复。
 
-**0.3.0 新交互**：展开一轮后，每个改文件的步骤行下方直接就是这处改动的 diff——默认展开、可就地收起；未改动区域折叠成 `⋯ N 行未改动`，点一下补全整文件上下文。右侧 **Changes** 面板改为 Copilot 式整文件审阅：顶部文件列表（状态、路径、`+A −R`、已审阅勾），下方编辑器视图可切 Inline／Side by side、用 `1 of N` 上下跳转改动、标记已审阅、复制路径，并按文件 Keep／Undo。轮次头的 **Restore Checkpoint** 是低调文字链接：确认后把文件恢复到该轮开始前（包含之后轮次已记录修改），聊天记录保留。
+**0.4.0 新交互**：忠实于真实执行过程——思考、命令、编辑按原始顺序出现，编辑的 diff 就长在对应的工具调用行里（默认收起，点一下就地展开），不再在轮末把整轮改动重新罗列成一片文件列表。右侧 **Changes** 面板仍是文件列表 + 整文件 diff，但改为按行虚拟化：只渲染视口内的行，几千行的文件滚动也不再卡；同时把行高、左侧增删色条、选中条、图标按钮对齐到 VS Code 的密度。轮次头的 **Restore Checkpoint** 是低调文字链接：确认后把文件恢复到该轮开始前（包含之后轮次已记录修改），聊天记录保留。
 
 截图由 `tools/preview.mjs` 用本插件真实的组件 + 合成数据渲染出来（`node tools/preview.mjs > docs/preview.html`，浏览器直接打开即可交互），不包含任何真实会话内容。
 
 ![轮次内就地 diff 与右侧 Changes 面板](docs/screenshots/overview.png)
 
-**就地 diff**：每个编辑行下直接展开该处改动；其余上下文折叠为 `⋯ N 行未改动`，点开即整文件。
+**就地 diff**：编辑出现在真实的工具调用处，点开才展开该处 diff；其余上下文折叠为 `⋯ N 行未改动`，点开即整文件。
 
 ![就地展开的 diff](docs/screenshots/inline.png)
 
-**Changes 面板**：左侧文件列表，右侧整文件 diff；可展开未改动区、切换并排、逐个改动导航。
+**Changes 面板**：左侧文件列表，右侧整文件 diff（行虚拟化）；可展开未改动区、切换并排、逐个改动导航。
 
 ![侧栏整文件审阅](docs/screenshots/expanded.png)
 
 > 第三张图里的 `替换 rotator.h +3 −3` 没有任何服务端记录——它完全是靠调用参数画出来的，这也是被 `dsh-chat-import` 导入的 Copilot 历史会话能显示 diff 的原因。
+>
+> 命令行（`sed`、`python -c`、脚本）一次调用可能改多个文件、也可能改在别处，没有逐命令归属，所以只在轮末的 `N 个文件已修改` 里按轮汇总；`edit` / `write` / `apply_patch` / `str_replace_editor` 这类文件工具则在各自的调用行就地显示 diff。
 
 > `@@` 块头只在没有全文、退回按 hunk 渲染时出现；有快照时就与 VS Code 的 diff 编辑器一样，只保留行号与增删底色。
 
@@ -28,10 +30,10 @@
 | --- | --- |
 | 每次修改自动追踪 | 观察 `edit` / `write` / `apply_patch`，以及编辑器风格的 `replace_string_in_file` / `multi_replace_string_in_file` / `edit_file` / `multi_edit` / `create_file` / `write_to_file`；一次调用 = 一条独立记录（一次改多个文件时按文件各记一条） |
 | 换字符串也能看 diff | 这类工具的结果里没有修改前后的全文，所以在调用前先快照目标文件、调用后再读一遍，用两份文本算 diff；连快照都拿不到时（导入的历史记录、绕过工具管线的调用）就直接用参数里的 `oldString` / `newString` 画片段 |
-| 就地 diff | 展开一轮后，每个编辑行下方直接渲染该处 diff（默认展开、可收起）：双侧行号、增删底色；有全文快照时显示整文件上下文，未改动区折叠为「⋯ N 行未改动」 |
+| 就地 diff | 编辑 diff 出现在真实的工具调用行内，默认收起（与 Copilot 的步骤行一致），点开才是双侧行号、增删底色；有全文快照时显示整文件上下文，未改动区折叠为「⋯ N 行未改动」 |
 | 增删统计 | 动作行右侧常驻 `+A −R`，与 Copilot 的动作行一致 |
 | 轮级统计就在「已完成」行 | 轮到 `+A −R` 显示在助手消息开头那行「已完成，用时 …」后面，点击打开右侧审阅面板——与 Copilot 的 action header 位置一致 |
-| 完整上下文 | 聊天内联与侧栏都能展开「⋯ N 行未改动」；超过 40 行先折叠，可继续「Show N more lines」 |
+| 完整上下文 | 聊天内联与侧栏都能展开「⋯ N 行未改动」；超过 40 行先折叠，可继续「Show N more lines」；大文件按 22px 行高虚拟化，滚动不重排全量 DOM |
 | 点开审阅 | 点 `+A −R` 打开右侧审阅面板，并滚动定位到这一次修改 |
 | 会话列表统计 | 侧边栏每个会话行下方显示该会话累计的 `+A −R` |
 | Changes 面板 | 顶部 `Changes` + 统计 + 作用域；左侧文件列表（A/M/D、`+A −R`、已审阅勾、选中高亮），右侧整文件 diff；工具栏可切 Inline／Side by side、`1 of N` 上下跳转、展开/折叠未改动区、复制路径，并按文件 Mark as Reviewed／Keep／Undo |
@@ -139,7 +141,7 @@ DSH_INSTALL=/path/to/node_modules/@deepseek-ai/dsh node tools/host-fs-smoke.mjs
 ## 实现要点
 
 - `ctx.on("tools/result", (exec, result) => …)` 里只取 `result.isError === false` 且命中三个文件写入工具的调用；`before === after` 的空改动不入库。
-- 整文件视图由 `fullRows(before, after, hunks)` 重建：用每个 hunk 的 `oldStart/newStart` 在快照全文里补齐未改动区，校验行号不重叠、不越界，超过 12,000 行即退回 hunk；没有快照的历史记录通过 `file-text` 端点尝试取全文，取不到就标明「仅显示改动块」。
+- 整文件视图由 `fullRows(before, after, hunks)` 重建：用每个 hunk 的 `oldStart/newStart` 在快照全文里补齐未改动区，校验行号不重叠、不越界，超过 12,000 行即退回 hunk；没有快照的历史记录只显示改动块并标明「仅显示改动块」（`file-text` 端点保留为按 id／路径取全文的 API）。
 - diff 是手写的：先剥掉公共前后缀，再按「两侧唯一出现的同一行」递归切分，小区域用 LCS（DP 上限 100 万格），都不满足就退化成整段替换——所以超大补丁不会卡住，也不会退化成一屏红色。
 - 撤销不做「按块」或「按行」的猜测：整条记录只有 before/after 两个版本，写回前先读盘比对，不一致就拒绝。宁可少撤，不可误撤。
 
@@ -165,11 +167,12 @@ node tools/backfill.mjs --dry
 - 历史回填依赖会话日志里能拿到前后文本：`apply_patch` 只写补丁、`dshFileReview` 元数据又缺失时，这条调用补不出来。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 本分支为 `0.3.0` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
+- 本分支为 `0.4.0` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
 
 ## 变更记录
 
-- `0.3.0`（本分支）— 对齐 Copilot Chat 的审阅 UI：展开轮次后每个编辑行就地显示 diff；整文件上下文（未改动区可展开）；右侧 Changes 面板重做为文件列表 + 整文件 diff 编辑器（Inline／Side by side、`1 of N` 导航、Mark as Reviewed、复制、按文件 Keep/Undo）；Restore Checkpoint 改为低调文字链接；新增 `file-text` RPC 与 4 MiB 上限；新建/删除文件也能渲染完整正文。
+- `0.4.0`（本分支）— 忠实执行顺序与滚动性能：去掉“展开轮次后平铺整轮文件列表”的汇总视图，编辑重新出现在各自的 `tool.call` 位置（`tool.call.toolview`），轮次头只保留完成状态、`+A −R` 与 Restore Checkpoint；整文件 diff 改为固定 22px 行高的窗口化渲染（>240 行启用），`fullRows` 结果按输入缓存、滚动用 rAF 节流，`1 of N` 跳转走 `navRef` 直接定位；Changes 面板加增删色条、40px 行号槽、26px 文件行、↑/↓ 切文件与“在编辑器中打开”；`str_replace_editor` 计入就地 diff；preview/smoke 支持虚拟滚动断言。
+- `0.3.0` — 对齐 Copilot Chat 的审阅 UI：展开轮次后每个编辑行就地显示 diff；整文件上下文（未改动区可展开）；右侧 Changes 面板重做为文件列表 + 整文件 diff 编辑器（Inline／Side by side、`1 of N` 导航、Mark as Reviewed、复制、按文件 Keep/Undo）；Restore Checkpoint 改为低调文字链接；新增 `file-text` RPC 与 4 MiB 上限；新建/删除文件也能渲染完整正文。
 
 - `0.2.0` — 持久化逐轮检查点与 shell 实际修改追踪；Restore Checkpoint 回到选中轮开始前；点击文件打开按轮定位的侧栏；完整 diff 加载、统一／左右对比与文件导航；净改动统计、迟到记录刷新和部分失败提示。大文件、非 UTF-8、符号链接及扫描限制明确排除，历史无快照的轮次不提供虚假恢复。
 

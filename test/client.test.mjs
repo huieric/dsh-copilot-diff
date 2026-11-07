@@ -211,6 +211,7 @@ test("apply wires rows, the turn footer, the review panel, session badges and st
 		"edit",
 		"write",
 		"apply_patch",
+		"str_replace_editor",
 		"replace_string_in_file",
 		"multi_replace_string_in_file",
 		"create_file",
@@ -440,10 +441,10 @@ test("the turn header carries this turn's totals on the completed line", async (
 	assert.doesNotMatch(textOf(empty), /\+\d/, "a turn that changed nothing shows no totals");
 });
 
-test("the expanded turn lists its file rows and the footer lists the files", async () => {
+test("the expanded turn leaves the real steps in place and the footer lists the files", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
-	const { ctx, registrations, openedTabs } = makeClientCtx();
+	const { ctx, registrations } = makeClientCtx();
 	globalThis.document = {
 		head: { appendChild: () => {} },
 		querySelector: () => null,
@@ -470,17 +471,12 @@ test("the expanded turn lists its file rows and the footer lists the files", asy
 	};
 	queue = [{ key: "s1", value: payload }];
 	const view = Node(props);
-	const rowElement = findComponent(view, "TurnEditRow");
-	assert.ok(rowElement, "each edit is its own row component");
-	const row = rowElement.type(rowElement.props);
-	const rows = collectNodes(row, "ld-trow");
-	assert.equal(rows.length, 1, "one row per edit in the turn");
-	assert.match(textOf(rows[0]), /Edited/, "the row carries the verb");
-	assert.match(textOf(rows[0]), /\+4/);
-	assert.equal(findButton(row, "ld-trow").props["aria-expanded"], true, "a single edit opens its diff in place");
-	assert.equal(findButton(row, "ld-trowpath").props.title, "/work/src/a.js");
-	findButton(row, "ld-trowopen").props.onClick({ stopPropagation() {} });
-	assert.equal(openedTabs[0]?.kind, "copilot-diff", "a row opens the same panel as its totals");
+	// The host renders reasoning and tool calls itself, in their original order.
+	// The turn header must not grow a second, aggregated list of edits.
+	assert.equal(collectNodes(view, "ld-trow").length, 0, "no aggregated edit list inside the turn header");
+	assert.equal(findComponent(view, "TurnEditRow"), undefined);
+	assert.equal(collectNodes(view, "ld-process").length, 1, "the completed line is still ours");
+	assert.match(textOf(view), /\+4/);
 
 	const Footer = registrations.find(
 		(entry) => entry.slot === "conversation.chat.turnTail"
@@ -492,47 +488,30 @@ test("the expanded turn lists its file rows and the footer lists the files", asy
 	assert.match(textOf(items[0]), /\+4/);
 });
 
-test("an expanded edit fetches full context and collapses the unchanged tail", async () => {
+test("the whole-file diff folds untouched context and reveals it on demand", async () => {
 	const before = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
 	const after = before.replace("line 10", "line ten");
-	const bare = {
+	const full = {
 		...record,
-		before: undefined,
-		after: undefined,
+		before,
+		after,
 		hunks: [{ oldStart: 10, oldLines: 1, newStart: 10, newLines: 1, rows: [{ t: "-", s: "line 10", old: 10 }, { t: "+", s: "line ten", new: 10 }] }]
 	};
-	const calls = [];
-	const ui = await setupHooks(async (_channel, endpoint, payload) => {
-		calls.push({ endpoint, payload });
-		if (endpoint === "file-text") return { ok: true, value: { id: "e1", path: "/work/src/a.js", added: 1, removed: 1, hasText: true, hunks: bare.hunks, before, after } };
-		return { ok: true, value: { root: "/work", records: [bare] } };
-	});
-	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
-	const turn = { turn: 1, status: "closed", start: { time: 1, data: { turn: 1 } }, end: { time: 2 } };
-	ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
-	await settle();
-	const holder = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
-	const element = findComponent(holder, "TurnEditRow");
-	assert.ok(element, "the turn renders an edit row");
-	const rowRun = hookRunner();
-	Object.assign(ui.hooks, rowRun.hooks);
-	rowRun.render(element.type, { ...element.props, record: bare, defaultOpen: true });
-	await settle();
-	const row = rowRun.render(element.type, { ...element.props, record: bare, defaultOpen: true });
-	const request = calls.find((item) => item.endpoint === "file-text");
-	assert.deepEqual(request?.payload, { sessionId: "s1", id: "e1" }, "the row asks the server for the full file text");
-	assert.match(textOf(row), /line 1/, "the full file supplies context around the hunk");
-	const diffElement = findComponent(row, "DiffBody");
-	assert.ok(diffElement, "the row renders its diff in place");
-	const diffRun = hookRunner();
-	Object.assign(ui.hooks, diffRun.hooks);
-	let diff = diffRun.render(diffElement.type, diffElement.props);
-	assert.match(textOf(diff), /unchanged lines/, "untouched regions start folded");
+	const ui = await setupHooks(async () => ({ ok: true, value: { root: "/work", records: [full] } }));
+	ui.render(ui.pane, { sessionId: "s1" }); await settle();
+	const view = ui.render(ui.pane, { sessionId: "s1" });
+	const element = findComponent(view, "DiffBody");
+	assert.ok(element, "the pane renders the whole file through a diff body");
+	const run = hookRunner();
+	Object.assign(ui.hooks, run.hooks);
+	let diff = run.render(element.type, element.props);
+	assert.match(textOf(diff), /line ten/, "the changed line is visible");
+	assert.doesNotMatch(textOf(diff), /line 1\b/, "the untouched head starts folded");
 	assert.ok(collectNodes(diff, "ld-gap").length >= 2, "both sides of the hunk fold");
-	findButton(diff, "ld-gap").props.onClick();
-	diff = diffRun.render(diffElement.type, diffElement.props);
-	assert.match(textOf(diff), /line 1/, "opening a gap reveals the hidden context");
-	diffRun.dispose(); rowRun.dispose(); ui.dispose();
+	collectNodes(diff, "ld-gap")[0].props.onClick();
+	diff = run.render(element.type, element.props);
+	assert.match(textOf(diff), /line 1\b/, "opening a gap reveals the hidden context");
+	run.dispose(); ui.dispose();
 });
 
 test("a created or deleted file renders its whole body without a hunk bar", async () => {
@@ -553,29 +532,15 @@ test("a created or deleted file renders its whole body without a hunk bar", asyn
 		after: "",
 		hunks: [{ oldStart: 1, oldLines: 2, newStart: 0, newLines: 0, rows: [{ t: "-", s: "gone", old: 1, new: null }, { t: "-", s: "also gone", old: 2, new: null }] }]
 	};
-	const ui = await setupHooks(async () => ({ ok: true, value: { root: "/work", records: [created] } }));
-	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
-	const turn = { turn: 1, status: "closed", start: { time: 1, data: { turn: 1 } }, end: { time: 2 } };
-	ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
-	await settle();
-	const holder = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
-	const element = findComponent(holder, "TurnEditRow");
-	assert.ok(element, "the turn renders an edit row");
-	for (const [sample, expected, absent] of [[created, /one/, /@@/], [deleted, /gone/, /@@/]]) {
-		const rowRun = hookRunner();
-		Object.assign(ui.hooks, rowRun.hooks);
-		rowRun.render(element.type, { ...element.props, record: sample, defaultOpen: true });
-		await settle();
-		const row = rowRun.render(element.type, { ...element.props, record: sample, defaultOpen: true });
-		const diffElement = findComponent(row, "DiffBody");
-		const diffRun = hookRunner();
-		Object.assign(ui.hooks, diffRun.hooks);
-		const diff = diffRun.render(diffElement.type, diffElement.props);
-		assert.equal(collectNodes(diff, "ld-hunk").length, 0, "whole-file views have no @@ bars");
-		assert.match(textOf(diff), expected, "the file body is rendered from full text");
-		assert.doesNotMatch(textOf(diff), absent, "no hunk header leaks into the body");
-		diffRun.dispose(); rowRun.dispose();
-	}
+	const ui = await setupHooks(async () => ({ ok: true, value: { root: "/work", records: [created, deleted] } }));
+	ui.render(ui.pane, { sessionId: "s1" }); await settle();
+	let view = ui.render(ui.pane, { sessionId: "s1" });
+	assert.match(textOf(view), /one/, "a created file renders its body");
+	assert.doesNotMatch(textOf(view), /@@/, "whole-file views have no hunk bars");
+	collectNodes(view, "ld-frow")[1].props.onClick();
+	view = ui.render(ui.pane, { sessionId: "s1" });
+	assert.match(textOf(view), /gone/, "the deleted file body is rendered from full text");
+	assert.doesNotMatch(textOf(view), /@@/);
 	ui.dispose();
 });
 
