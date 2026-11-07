@@ -391,7 +391,8 @@ function buildPage(bundleCss) {
 	var Pane = findBySlot("sidebar.right.pane.tab");
 	var Badge = findBySlot("sidebar.workspaces.session.row.action");
 	var Process = findBySlot("conversation.chat.node/turn-process");
-	var Footer = findBySlot("conversation.chat.turnTail");
+	var Footer = findBySlot("conversation.chat.turnTail/dsh-copilot-diff");
+	var Boundary = findBySlot("conversation.chat.turnTail/dsh-copilot-diff-boundary");
 	var turn = { turn: 1, start: { data: { turn: 1 }, time: 1762457324000 }, end: { time: 1762459100000, data: { reason: { kind: "completed" } } }, steps: new Array(81), status: "closed" };
 	var common = { cwd: "/work/product", home: "/home/dev", openFile: function () {}, t: t };
 
@@ -460,6 +461,12 @@ function buildPage(bundleCss) {
 				seq: 1930,
 				sessionId: "s1",
 				openFile: common.openFile,
+				t: t
+			}),
+			Boundary === undefined ? null : createElement(Boundary, {
+				turn: turn,
+				seq: 1930,
+				sessionId: "s1",
 				t: t
 			})
 		),

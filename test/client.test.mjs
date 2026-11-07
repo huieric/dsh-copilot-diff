@@ -227,10 +227,15 @@ test("apply wires rows, the turn footer, the review panel, session badges and st
 	}
 
 	const foot = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
-	assert.equal(foot.length, 1, "one Copilot-style footer per turn");
-	assert.equal(foot[0].spec.id, "dsh-copilot-diff");
-	assert.equal(foot[0].spec.order, -1);
-	assert.equal(foot[0].spec.inject("s-1").sessionId, "s-1");
+	assert.equal(foot.length, 2, "the card and the gap row share the turn tail slot");
+	const card = foot.find((entry) => entry.spec.id === "dsh-copilot-diff");
+	const gap = foot.find((entry) => entry.spec.id === "dsh-copilot-diff-boundary");
+	assert.ok(card, "the card keeps its own registration");
+	assert.ok(gap, "the gap row has its own registration");
+	assert.equal(card.spec.order, -1);
+	assert.equal(gap.spec.order, 1, "the gap row renders after the card");
+	assert.equal(card.spec.inject("s-1").sessionId, "s-1");
+	assert.equal(gap.spec.inject("s-1").sessionId, "s-1");
 
 	const diffOn = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab");
 	assert.equal(diffOn.length, 1);
@@ -552,7 +557,7 @@ test("the expanded turn leaves the real steps in place and the footer lists the 
 	assert.match(textOf(view), /\+4/);
 
 	const Footer = registrations.find(
-		(entry) => entry.slot === "conversation.chat.turnTail"
+		(entry) => entry.slot === "conversation.chat.turnTail" && entry.spec.id === "dsh-copilot-diff"
 	).component;
 	queue = [0, { key: "s1", value: payload }, false, null];
 	const footer = Footer({ turn, sessionId: "s1", t });
@@ -687,8 +692,7 @@ test("the turn footer keeps the change count and both actions", async () => {
 
 	queue = [0, { key: "s1", value: { records: [] } }, false, null];
 	const other = Footer({ turn: { status: "closed", start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
-	assert.equal(findButton(other, "ld-turnhead"), undefined, "a turn that changed nothing renders no card");
-	assert.ok(findComponent(other, "ForkControl"), "the boundary row still closes the turn");
+	assert.equal(other, null, "a turn that changed nothing renders no card at all");
 });
 
 /** A small hook runner executes effects and re-renders the actual registered component. */
@@ -717,7 +721,8 @@ async function setupHooks(rpc, options = {}) {
 	const exported = loadBundle().factory(() => runner.hooks);
 	const services = makeClientCtx({ rpc, ...options });
 	await exported.apply(services.ctx);
-	return { ...runner, ...services, pane: services.registrations.find((entry) => entry.slot === "sidebar.right.pane.tab").component, footer: services.registrations.find((entry) => entry.slot === "conversation.chat.turnTail").component };
+	const tail = (id) => services.registrations.find((entry) => entry.slot === "conversation.chat.turnTail" && entry.spec.id === id).component;
+	return { ...runner, ...services, pane: services.registrations.find((entry) => entry.slot === "sidebar.right.pane.tab").component, footer: tail("dsh-copilot-diff"), boundary: tail("dsh-copilot-diff-boundary") };
 }
 
 test("footer file opens numeric turn scope, loads full hunks, navigates and scopes actions", async () => {
@@ -803,9 +808,9 @@ test("checkpoint prefix is unavailable historically and requires explicit files-
 	const requests = [];
 	const ui = await setupHooks(async (_channel, endpoint, payload) => { requests.push({ endpoint, payload }); return { ok: true, value: { records: [{ ...record, turn: 3, time: 5 }] } }; });
 	const turn = { turn: 3, status: "closed", start: { data: { turn: 3 }, time: 1 }, end: { time: 2 } };
-	ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 }); await settle();
-	const view = ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 });
-	assert.equal(collectNodes(view, "ld-turnfoot").length, 1, "the boundary row closes the turn");
+	ui.render(ui.boundary, { sessionId: "s1", turn, seq: 9 }); await settle();
+	const view = ui.render(ui.boundary, { sessionId: "s1", turn, seq: 9 });
+	assert.equal(collectNodes(view, "ld-turnboundary").length, 1, "the gap row closes the turn");
 	const checkpointElement = findComponent(view, "CheckpointControl");
 	assert.ok(checkpointElement, "the checkpoint control sits on the boundary row, not the turn header");
 	assert.ok(findComponent(view, "ForkControl"), "the same row offers a fork");
@@ -831,8 +836,8 @@ test("the boundary row forks the conversation from the turn's last step", async 
 		openSession: (id) => opened.push(id)
 	});
 	const turn = { turn: 3, status: "closed", start: { data: { turn: 3 }, time: 1 }, end: { time: 2 } };
-	ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 }); await settle();
-	const footer = ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 });
+	ui.render(ui.boundary, { sessionId: "s1", turn, seq: 9 }); await settle();
+	const footer = ui.render(ui.boundary, { sessionId: "s1", turn, seq: 9 });
 	const element = findComponent(footer, "ForkControl");
 	assert.ok(element, "the boundary row carries the fork control");
 	const run = hookRunner();

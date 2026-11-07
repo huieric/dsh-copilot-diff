@@ -75,10 +75,15 @@ try {
   }
   await page.screenshot({ path: 'output/playwright/copilot-review-virtual.png', fullPage: true });
 
-  // The turn boundary row carries the checkpoint link and the fork control.
-  const boundary = page.locator('.ld-turnfoot');
+  // The turn boundary row carries the checkpoint link and the fork control, and
+  // it stays invisible until the pointer enters the gap between two turns.
+  const boundary = page.locator('.ld-turnboundary');
   await boundary.waitFor();
-  assert.equal(await page.locator('.ld-turnfoot .ld-cplink').count(), 2, 'restore and fork share the boundary row');
+  assert.equal(await page.locator('.ld-turnboundary .ld-cplink').count(), 2, 'restore and fork share the boundary row');
+  assert.equal(await boundary.evaluate((node) => getComputedStyle(node).opacity), '0', 'the boundary row is hidden at rest');
+  await boundary.hover();
+  await page.waitForTimeout(200);
+  assert.equal(await boundary.evaluate((node) => getComputedStyle(node).opacity), '1', 'hovering the gap reveals the row');
   // Checkpoint stays a quiet link until pressed, then asks for confirmation.
   await page.getByRole('button', { name: 'Restore checkpoint before turn 1', exact: true }).click();
   await page.locator('.ld-confirm').waitFor();

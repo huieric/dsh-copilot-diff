@@ -25,8 +25,10 @@ try {
 	await page.locator('.ld-pane .ld-gap.open').first().waitFor();
 	await page.locator('.ld-pane').screenshot({ path: 'docs/screenshots/unchanged.png' });
 
-	// The turn boundary row: checkpoint restore and fork.
-	await page.locator('.ld-turnfoot').screenshot({ path: 'docs/screenshots/boundary.png' });
+	// The turn boundary row: checkpoint restore and fork, revealed by hover.
+	await page.locator('.ld-turnboundary').hover();
+	await page.waitForTimeout(220);
+	await page.locator('.ld-turnboundary').screenshot({ path: 'docs/screenshots/boundary.png' });
 
 	// Chat side: the edit row at its real tool call, expanded in place.
 	await page.locator('.pv-rows .ld-toggle').first().click();
