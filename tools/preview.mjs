@@ -91,6 +91,43 @@ ENTRIES.forEach(function (entry) {
 	entry.added = entry.hunks.reduce(function (n, hunk) { return n + hunk.rows.filter(function (row) { return row.t === "+"; }).length; }, 0);
 	entry.removed = entry.hunks.reduce(function (n, hunk) { return n + hunk.rows.filter(function (row) { return row.t === "-"; }).length; }, 0);
 });
+// Every edit carries full before/after text in the fixture: the pane shows the
+// whole file with folded unchanged regions instead of only the hunk.
+function synthesizeText(entry) {
+	var oldMax = 0, newMax = 0;
+	entry.hunks.forEach(function (hunk) {
+		oldMax = Math.max(oldMax, hunk.oldStart + hunk.oldLines - 1);
+		newMax = Math.max(newMax, hunk.newStart + hunk.newLines - 1);
+	});
+	var before = [], after = [];
+	for (var i = 1; i <= oldMax; i++) before.push("    // line " + i);
+	for (var j = 1; j <= newMax; j++) after.push("    // line " + j);
+	entry.hunks.forEach(function (hunk) {
+		hunk.rows.forEach(function (row) {
+			if (row.old !== null && row.old !== undefined) before[row.old - 1] = row.s;
+			if (row.new !== null && row.new !== undefined) after[row.new - 1] = row.s;
+		});
+	});
+	entry.before = oldMax === 0 ? "" : before.join("\n") + "\n";
+	entry.after = newMax === 0 ? "" : after.join("\n") + "\n";
+}
+ENTRIES.forEach(function (entry) { if (entry.id !== "e1") synthesizeText(entry); });
+// One edit carries full before/after text, so the pane can show the whole file
+// with folded unchanged regions instead of only the hunk.
+(function () {
+	var beforeLines = [];
+	for (var i = 1; i <= 60; i++) beforeLines.push("    // slot bookkeeping " + i);
+	beforeLines[40] = "void SlotRotator::rotate(const Spin& spin) {";
+	beforeLines[41] = "    if (spin.value > 0) {";
+	beforeLines[42] = "        advanceBy(spin.value);";
+	beforeLines[43] = "    }";
+	var afterLines = beforeLines.slice();
+	afterLines[41] = "    if (spin.value >= kStopThreshold) {";
+	afterLines[42] = "        advanceBy(remap(spin.value));";
+	ENTRIES[0].before = beforeLines.join("\n") + "\n";
+	ENTRIES[0].after = afterLines.join("\n") + "\n";
+})();
+
 var CHECKPOINTS = [{ turn: 1, time: 1762457324000, status: "ready", files: ENTRIES.map(function (entry) { return entry.path; }), limitations: ["Synthetic fixture only; no workspace files are written."] }];
 function summary(records) {
 	var open = records.filter(function (entry) { return entry.state === "open"; });
@@ -259,8 +296,16 @@ var connection = {
 					value: { records: ENTRIES.filter(function (entry) { return entry.callId === callId; }) }
 				});
 			}
-			if (endpoint === "list") return Promise.resolve({ ok: true, value: snapshot(ENTRIES.map(function (entry) { var copy = Object.assign({}, entry); delete copy.hunks; return copy; })) });
+			if (endpoint === "list") return Promise.resolve({ ok: true, value: snapshot(ENTRIES.map(function (entry) { var copy = Object.assign({}, entry); delete copy.hunks; delete copy.before; delete copy.after; return copy; })) });
 			if (endpoint === "review-turn") return Promise.resolve({ ok: true, value: snapshot(ENTRIES.filter(function (entry) { return entry.turn === payload.turn; })) });
+			if (endpoint === "file-text") {
+				var edit = ENTRIES.find(function (entry) {
+					return (payload.id !== undefined && entry.id === payload.id) || (payload.id === undefined && entry.path === payload.path);
+				});
+				if (edit === undefined) return Promise.resolve({ ok: false, error: { message: "No such edit" } });
+				var copy = Object.assign({}, edit, { hasText: typeof edit.before === "string" && typeof edit.after === "string" });
+				return Promise.resolve({ ok: true, value: copy });
+			}
 			if (endpoint === "checkpoints") return Promise.resolve({ ok: true, value: { checkpoints: CHECKPOINTS } });
 			if (endpoint === "restore-checkpoint") {
 				ENTRIES.forEach(function (entry) { entry.state = "reverted"; });
@@ -390,7 +435,7 @@ function buildPage(bundleCss) {
 						}
 					}
 				},
-				turnProcess: { foldable: true, hasContent: true, open: false, setOpen: function () {} },
+				turnProcess: { foldable: true, hasContent: true, open: true, setOpen: function () {} },
 				sessionId: "s1",
 				t: t
 			}),

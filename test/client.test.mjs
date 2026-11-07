@@ -72,6 +72,25 @@ function findButton(node, name) {
 }
 
 /**
+ * Depth-first search for a component element by function name.
+ * @param node - rendered tree.
+ * @param name - component function name.
+ * @returns the element, or undefined.
+ */
+function findComponent(node, name) {
+	if (node === null || node === undefined || typeof node !== "object") return undefined;
+	if (Array.isArray(node)) {
+		for (const child of node) {
+			const found = findComponent(child, name);
+			if (found !== undefined) return found;
+		}
+		return undefined;
+	}
+	if (typeof node.type === "function" && node.type.name === name) return node;
+	return findComponent(node.props?.children, name);
+}
+
+/**
  * Every element whose class list contains `name`.
  * @param node - rendered tree.
  * @param name - class name.
@@ -451,11 +470,16 @@ test("the expanded turn lists its file rows and the footer lists the files", asy
 	};
 	queue = [{ key: "s1", value: payload }];
 	const view = Node(props);
-	const rows = collectNodes(view, "ld-trow");
+	const rowElement = findComponent(view, "TurnEditRow");
+	assert.ok(rowElement, "each edit is its own row component");
+	const row = rowElement.type(rowElement.props);
+	const rows = collectNodes(row, "ld-trow");
 	assert.equal(rows.length, 1, "one row per edit in the turn");
 	assert.match(textOf(rows[0]), /Edited/, "the row carries the verb");
 	assert.match(textOf(rows[0]), /\+4/);
-	findButton(view, "ld-trow").props.onClick({ stopPropagation() {} });
+	assert.equal(findButton(row, "ld-trow").props["aria-expanded"], true, "a single edit opens its diff in place");
+	assert.equal(findButton(row, "ld-trowpath").props.title, "/work/src/a.js");
+	findButton(row, "ld-trowopen").props.onClick({ stopPropagation() {} });
 	assert.equal(openedTabs[0]?.kind, "copilot-diff", "a row opens the same panel as its totals");
 
 	const Footer = registrations.find(
@@ -466,6 +490,93 @@ test("the expanded turn lists its file rows and the footer lists the files", asy
 	const items = collectNodes(footer, "ld-fileitem");
 	assert.equal(items.length, 1, "the footer lists the changed files");
 	assert.match(textOf(items[0]), /\+4/);
+});
+
+test("an expanded edit fetches full context and collapses the unchanged tail", async () => {
+	const before = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+	const after = before.replace("line 10", "line ten");
+	const bare = {
+		...record,
+		before: undefined,
+		after: undefined,
+		hunks: [{ oldStart: 10, oldLines: 1, newStart: 10, newLines: 1, rows: [{ t: "-", s: "line 10", old: 10 }, { t: "+", s: "line ten", new: 10 }] }]
+	};
+	const calls = [];
+	const ui = await setupHooks(async (_channel, endpoint, payload) => {
+		calls.push({ endpoint, payload });
+		if (endpoint === "file-text") return { ok: true, value: { id: "e1", path: "/work/src/a.js", added: 1, removed: 1, hasText: true, hunks: bare.hunks, before, after } };
+		return { ok: true, value: { root: "/work", records: [bare] } };
+	});
+	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
+	const turn = { turn: 1, status: "closed", start: { time: 1, data: { turn: 1 } }, end: { time: 2 } };
+	ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
+	await settle();
+	const holder = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
+	const element = findComponent(holder, "TurnEditRow");
+	assert.ok(element, "the turn renders an edit row");
+	const rowRun = hookRunner();
+	Object.assign(ui.hooks, rowRun.hooks);
+	rowRun.render(element.type, { ...element.props, record: bare, defaultOpen: true });
+	await settle();
+	const row = rowRun.render(element.type, { ...element.props, record: bare, defaultOpen: true });
+	const request = calls.find((item) => item.endpoint === "file-text");
+	assert.deepEqual(request?.payload, { sessionId: "s1", id: "e1" }, "the row asks the server for the full file text");
+	assert.match(textOf(row), /line 1/, "the full file supplies context around the hunk");
+	const diffElement = findComponent(row, "DiffBody");
+	assert.ok(diffElement, "the row renders its diff in place");
+	const diffRun = hookRunner();
+	Object.assign(ui.hooks, diffRun.hooks);
+	let diff = diffRun.render(diffElement.type, diffElement.props);
+	assert.match(textOf(diff), /unchanged lines/, "untouched regions start folded");
+	assert.ok(collectNodes(diff, "ld-gap").length >= 2, "both sides of the hunk fold");
+	findButton(diff, "ld-gap").props.onClick();
+	diff = diffRun.render(diffElement.type, diffElement.props);
+	assert.match(textOf(diff), /line 1/, "opening a gap reveals the hidden context");
+	diffRun.dispose(); rowRun.dispose(); ui.dispose();
+});
+
+test("a created or deleted file renders its whole body without a hunk bar", async () => {
+	const created = {
+		...record,
+		path: "/work/src/new.ts",
+		created: true,
+		before: "",
+		after: "one\ntwo\n",
+		hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2, rows: [{ t: "+", s: "one", old: null, new: 1 }, { t: "+", s: "two", old: null, new: 2 }] }]
+	};
+	const deleted = {
+		...record,
+		id: "e2",
+		path: "/work/src/old.ts",
+		deleted: true,
+		before: "gone\nalso gone\n",
+		after: "",
+		hunks: [{ oldStart: 1, oldLines: 2, newStart: 0, newLines: 0, rows: [{ t: "-", s: "gone", old: 1, new: null }, { t: "-", s: "also gone", old: 2, new: null }] }]
+	};
+	const ui = await setupHooks(async () => ({ ok: true, value: { root: "/work", records: [created] } }));
+	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
+	const turn = { turn: 1, status: "closed", start: { time: 1, data: { turn: 1 } }, end: { time: 2 } };
+	ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
+	await settle();
+	const holder = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn } }, turnProcess: { foldable: true, hasContent: true, open: true }, t: (key, fallback) => fallback ?? key });
+	const element = findComponent(holder, "TurnEditRow");
+	assert.ok(element, "the turn renders an edit row");
+	for (const [sample, expected, absent] of [[created, /one/, /@@/], [deleted, /gone/, /@@/]]) {
+		const rowRun = hookRunner();
+		Object.assign(ui.hooks, rowRun.hooks);
+		rowRun.render(element.type, { ...element.props, record: sample, defaultOpen: true });
+		await settle();
+		const row = rowRun.render(element.type, { ...element.props, record: sample, defaultOpen: true });
+		const diffElement = findComponent(row, "DiffBody");
+		const diffRun = hookRunner();
+		Object.assign(ui.hooks, diffRun.hooks);
+		const diff = diffRun.render(diffElement.type, diffElement.props);
+		assert.equal(collectNodes(diff, "ld-hunk").length, 0, "whole-file views have no @@ bars");
+		assert.match(textOf(diff), expected, "the file body is rendered from full text");
+		assert.doesNotMatch(textOf(diff), absent, "no hunk header leaks into the body");
+		diffRun.dispose(); rowRun.dispose();
+	}
+	ui.dispose();
 });
 
 test("the turn header speaks Chinese when the dictionary is bound", async () => {
@@ -587,13 +698,17 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 	await buttons.find((b) => b.props["aria-label"] === "Keep Turn 7").props.onClick();
 	assert.ok(requests.some((r) => r.endpoint === "keep-turn" && r.payload.turn === 7));
 	paneRun.render(ui.pane, { sessionId: "s1" }); await settle();
-	buttons.find((b) => b.props["aria-label"] === "Next file").props.onClick();
+	collectNodes(pane, "ld-frow")[1].props.onClick();
 	pane = paneRun.render(ui.pane, { sessionId: "s1" });
-	assert.equal(findButton(pane, "ld-select").props.value, "/work/b.js");
-	collectNodes(pane, "ld-btn").find((b) => textOf(b) === "Side by side").props.onClick();
+	const files = collectNodes(pane, "ld-frow");
+	assert.equal(files.length, 2, "both files are listed");
+	assert.equal(files.filter((b) => b.props["aria-selected"] === true).length, 1, "one file is selected");
+	assert.match(textOf(files[1]), /b\.js/);
+	collectNodes(pane, "ld-segbtn").find((b) => textOf(b) === "Side by side").props.onClick();
 	pane = paneRun.render(ui.pane, { sessionId: "s1" });
+	assert.match(textOf(pane), /was here/);
 	assert.match(textOf(pane), /now here/);
-	assert.equal(collectNodes(pane, "ld-btn").find((b) => b.props["aria-label"] === "Next file").props.disabled, true);
+	assert.match(textOf(pane), /1 of 1/);
 	paneRun.dispose(); ui.dispose();
 });
 
@@ -614,7 +729,7 @@ test("all changes hydrate summary bodies and stale replies cannot leak across se
 	assert.match(textOf(view), /was here/);
 	assert.ok(requests.includes("detail"));
 	assert.doesNotMatch(textOf(view), /No newline|undefined|NaN/);
-	collectNodes(view, "ld-btn").find((button) => textOf(button) === "Side by side").props.onClick();
+	collectNodes(view, "ld-segbtn").find((button) => textOf(button) === "Side by side").props.onClick();
 	view = ui.render(ui.pane, { sessionId: "new" });
 	assert.match(textOf(view), /was here/);
 	assert.match(textOf(view), /now here/);
@@ -630,14 +745,15 @@ test("checkpoint prefix is unavailable historically and requires explicit files-
 	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
 	const turn = { turn: 3, status: "closed", start: { data: { turn: 3 }, time: 1 }, end: { time: 2 } };
 	let view = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn }, data: { turn: 3, messageCount: 2 } }, turnProcess: { foldable: true, hasContent: true, open: false } });
-	const checkpointElement = view.props.children[0];
+	const checkpointElement = findComponent(view, "CheckpointControl");
+	assert.ok(checkpointElement, "the checkpoint control lives in the turn header");
 	const run = hookRunner(); Object.assign(ui.hooks, run.hooks);
-	let checkpoint = run.render(checkpointElement.type, checkpointElement.props);
-	assert.equal(findButton(checkpoint, "ld-btn").props.disabled, true);
+	let checkpoint = run.render(checkpointElement.type, { ...checkpointElement.props, payload: { checkpoints: [{ turn: 3, status: "unavailable", limitations: [] }] } });
+	assert.equal(findButton(checkpoint, "ld-cplink").props.disabled, true, "historical turns do not offer a restore");
 	const props = { ...checkpointElement.props, payload: { checkpoints: [{ turn: 3, status: "ready", limitations: [] }] } };
 	checkpoint = run.render(checkpointElement.type, props);
-	findButton(checkpoint, "ld-btn").props.onClick();
-	assert.equal(requests.filter((r) => r.endpoint === "restore-checkpoint").length, 0);
+	findButton(checkpoint, "ld-cplink").props.onClick();
+	assert.equal(requests.filter((r) => r.endpoint === "restore-checkpoint").length, 0, "the first press only asks for confirmation");
 	checkpoint = run.render(checkpointElement.type, props);
 	assert.match(textOf(checkpoint), /before turn 3.*subsequent captured changes.*Only files/);
 	await collectNodes(checkpoint, "ld-btn").find((button) => textOf(button) === "Restore").props.onClick();
@@ -704,8 +820,9 @@ test("mixed call hydration renders only exact visible list identities while inli
  const net={...record,id:"checkpoint:1:a",callId:"checkpoint:1",path:"a",turn:1};
  const ui=await setupHooks(async(_c,endpoint,payload)=>({ok:true,value:{records:endpoint==="detail" ? payload.callId==="c1"?[covered,secret]:[net] : [{...secret,hunks:undefined},{...net,hunks:undefined}]}}));
  ui.render(ui.pane,{sessionId:"s1"});await settle();const view=ui.render(ui.pane,{sessionId:"s1"});
- assert.equal(findButton(view,"ld-select").props.children.length,2);
- assert.doesNotMatch(textOf(view),/hidden-original/);assert.match(textOf(view),/2 files/);ui.dispose();
+ assert.equal(collectNodes(view,"ld-frow").length,2);
+ assert.equal(findButton(view,"ld-frow").props["aria-selected"],true);
+ assert.doesNotMatch(textOf(view),/hidden-original/);assert.doesNotMatch(textOf(view),/secret/);ui.dispose();
 });
 test("numeric historical footer carries the same bounded window into review and Keep",async()=>{
  const requests=[];const old={...record,time:150};

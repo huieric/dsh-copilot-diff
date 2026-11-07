@@ -629,6 +629,28 @@ test("editor plus shell uses net footer rows without double counts and original 
 });
 
 
+test("file-text serves bounded full context for inline diffs and refuses unknown edits", async () => {
+	await withHome(async () => {
+		const host = makeHost(), dispose = await apply(host.ctx);
+		host.files.set("/work/a", "one\ntwo\n");
+		await host.emitSessionEvent({ type: "turn/start", time: Date.now(), data: { turn: 1 } });
+		host.files.set("/work/a", "one\nTWO\n");
+		await host.emitExec({ name: "write", callId: "c1", agent: { id: "s1" } }, { path: "/work/a", before: "one\ntwo\n", after: "one\nTWO\n" });
+		await host.emitSessionEvent({ type: "turn/end", time: Date.now(), data: { turn: 1 } });
+		const byPath = await host.call("file-text", { sessionId: "s1", path: "/work/a", turn: 1 });
+		assert.equal(byPath.ok, true);
+		assert.equal(byPath.value.hasText, true);
+		assert.equal(byPath.value.before, "one\ntwo\n");
+		assert.equal(byPath.value.after, "one\nTWO\n");
+		assert.equal(byPath.value.hunks.length, 1);
+		const byId = await host.call("file-text", { sessionId: "s1", id: byPath.value.id });
+		assert.equal(byId.value.path, "/work/a", "the id form returns the same record");
+		assert.equal((await host.call("file-text", { sessionId: "s1", path: "/work/a", turn: 9 })).ok, false, "a different turn cannot borrow the text");
+		assert.equal((await host.call("file-text", { sessionId: "s1", path: "/work/missing" })).ok, false);
+		await dispose();
+	});
+});
+
 test("excluded editor files stay visible beside authoritative net rows", async () => {
 	await withHome(async () => {
 		const root = mkdtempSync(join(tmpdir(), "copilot-workspace-"));
