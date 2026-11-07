@@ -162,6 +162,7 @@ function makeClientCtx(options = {}) {
 			if (name === "sidebarRight") return { mounted, openTab: (kind, opts) => void openedTabs.push({ kind, opts, sessionId:mountedId }) };
 			if (name === "uiWorkspace") return options.noNavigation ? undefined : {openSession: options.openSession ?? mount};
 			if (name === "sidebarRightTabs") return { register: (spec) => void tabTypes.push(spec) };
+			if (name === "sessions") return options.sessions;
 			return undefined;
 		},
 		effect: (fn) => fn(),
@@ -487,7 +488,7 @@ test("the turn header carries this turn's totals on the completed line", async (
 	const head = collectNodes(view, "ld-processhead")[0];
 	const order = (head.props.children ?? []).flatMap((child) => String(child?.props?.className ?? "").split(/\s+/));
 	assert.ok(order.indexOf("ld-processbadge") < order.indexOf("ld-processchev"), "the totals come before the chevron");
-	assert.ok(order.indexOf("ld-processchev") < order.indexOf("ld-spacer"), "the chevron trails the totals");
+	assert.equal(order[order.length - 1], "ld-processchev", "the chevron is the row's last control");
 	const chevron = findButton(view, "ld-processchev");
 	assert.ok(chevron !== undefined, "a foldable turn still offers the chevron");
 	chevron.props.onClick({ stopPropagation() {} });
@@ -612,13 +613,14 @@ test("a created or deleted file renders its whole body without a hunk bar", asyn
 	let view = ui.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(view), /one/, "a created file renders its body");
 	assert.doesNotMatch(textOf(view), /@@/, "whole-file views have no hunk bars");
-	assert.equal(collectNodes(view, "ld-frow").length, 0, "the file index starts folded");
-	findButton(view, "ld-fileshead").props.onClick();
-	view = ui.render(ui.pane, { sessionId: "s1" });
-	collectNodes(view, "ld-frow")[1].props.onClick();
-	view = ui.render(ui.pane, { sessionId: "s1" });
+	assert.equal(collectNodes(view, "ld-flatfile").length, 2, "both files are flattened into one column");
 	assert.match(textOf(view), /gone/, "the deleted file body is rendered from full text");
 	assert.doesNotMatch(textOf(view), /@@/);
+	// Folding one section hides that file's body and leaves the other one alone.
+	findButton(view, "ld-flatfold").props.onClick();
+	view = ui.render(ui.pane, { sessionId: "s1" });
+	assert.doesNotMatch(textOf(view), /two/, "the folded section drops its body");
+	assert.match(textOf(view), /gone/, "the other section still renders");
 	ui.dispose();
 });
 
@@ -684,8 +686,9 @@ test("the turn footer keeps the change count and both actions", async () => {
 	assert.ok(findButton(footer, "ld-turnbtn-strong"), "Review sits in the header too");
 
 	queue = [0, { key: "s1", value: { records: [] } }, false, null];
-	const other = Footer({ turn: { start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
-	assert.equal(other, null, "a turn that changed nothing renders no footer");
+	const other = Footer({ turn: { status: "closed", start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
+	assert.equal(findButton(other, "ld-turnhead"), undefined, "a turn that changed nothing renders no card");
+	assert.ok(findComponent(other, "ForkControl"), "the boundary row still closes the turn");
 });
 
 /** A small hook runner executes effects and re-renders the actual registered component. */
@@ -742,17 +745,13 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 	await buttons.find((b) => b.props["aria-label"] === "Keep Turn 7").props.onClick();
 	assert.ok(requests.some((r) => r.endpoint === "keep-turn" && r.payload.turn === 7));
 	paneRun.render(ui.pane, { sessionId: "s1" }); await settle();
-	collectNodes(paneRun.render(ui.pane, { sessionId: "s1" }), "ld-fileshead")[0].props.onClick();
-	collectNodes(paneRun.render(ui.pane, { sessionId: "s1" }), "ld-frow")[1].props.onClick();
 	pane = paneRun.render(ui.pane, { sessionId: "s1" });
-	const files = collectNodes(pane, "ld-frow");
-	assert.equal(files.length, 0, "choosing a file folds the index again");
-	assert.match(textOf(pane), /b\.js/, "the chosen file is what the editor shows");
+	assert.equal(collectNodes(pane, "ld-flatfile").length, 2, "both files are flattened into the pane");
+	assert.match(textOf(pane), /b\.js/, "the second file is visible without selecting it");
 	collectNodes(pane, "ld-segbtn").find((b) => textOf(b) === "Side by side").props.onClick();
 	pane = paneRun.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(pane), /was here/);
 	assert.match(textOf(pane), /now here/);
-	assert.match(textOf(pane), /1 of 1/);
 	paneRun.dispose(); ui.dispose();
 });
 
@@ -802,12 +801,14 @@ test("all changes hydrate summary bodies and stale replies cannot leak across se
 
 test("checkpoint prefix is unavailable historically and requires explicit files-only confirmation", async () => {
 	const requests = [];
-	const ui = await setupHooks(async (_channel, endpoint, payload) => { requests.push({ endpoint, payload }); return { ok: true, value: { records: [] } }; });
-	const Process = ui.registrations.find((entry) => entry.spec.key === "turn-process").component;
+	const ui = await setupHooks(async (_channel, endpoint, payload) => { requests.push({ endpoint, payload }); return { ok: true, value: { records: [{ ...record, turn: 3, time: 5 }] } }; });
 	const turn = { turn: 3, status: "closed", start: { data: { turn: 3 }, time: 1 }, end: { time: 2 } };
-	let view = ui.render(Process, { sessionId: "s1", node: { location: { kind: "turn", turn }, data: { turn: 3, messageCount: 2 } }, turnProcess: { foldable: true, hasContent: true, open: false } });
+	ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 }); await settle();
+	const view = ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 });
+	assert.equal(collectNodes(view, "ld-turnfoot").length, 1, "the boundary row closes the turn");
 	const checkpointElement = findComponent(view, "CheckpointControl");
-	assert.ok(checkpointElement, "the checkpoint control lives in the turn header");
+	assert.ok(checkpointElement, "the checkpoint control sits on the boundary row, not the turn header");
+	assert.ok(findComponent(view, "ForkControl"), "the same row offers a fork");
 	const run = hookRunner(); Object.assign(ui.hooks, run.hooks);
 	let checkpoint = run.render(checkpointElement.type, { ...checkpointElement.props, payload: { checkpoints: [{ turn: 3, status: "unavailable", limitations: [] }] } });
 	assert.equal(findButton(checkpoint, "ld-cplink").props.disabled, true, "historical turns do not offer a restore");
@@ -820,6 +821,64 @@ test("checkpoint prefix is unavailable historically and requires explicit files-
 	await collectNodes(checkpoint, "ld-btn").find((button) => textOf(button) === "Restore").props.onClick();
 	assert.deepEqual(requests.find((r) => r.endpoint === "restore-checkpoint").payload, { sessionId: "s1", turn: 3 });
 	run.dispose(); ui.dispose();
+});
+
+test("the boundary row forks the conversation from the turn's last step", async () => {
+	const forks = [];
+	const opened = [];
+	const ui = await setupHooks(async () => ({ ok: true, value: { records: [{ ...record, turn: 3, time: 5 }] } }), {
+		sessions: { fork: async (input) => { forks.push(input); return "child-1"; } },
+		openSession: (id) => opened.push(id)
+	});
+	const turn = { turn: 3, status: "closed", start: { data: { turn: 3 }, time: 1 }, end: { time: 2 } };
+	ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 }); await settle();
+	const footer = ui.render(ui.footer, { sessionId: "s1", turn, seq: 9 });
+	const element = findComponent(footer, "ForkControl");
+	assert.ok(element, "the boundary row carries the fork control");
+	const run = hookRunner();
+	Object.assign(ui.hooks, run.hooks);
+	const control = run.render(element.type, element.props);
+	const button = findButton(control, "ld-cplink");
+	assert.match(textOf(button), /Fork/);
+	assert.equal(button.props.disabled, false, "the host can fork here");
+	await button.props.onClick();
+	await settle();
+	assert.deepEqual(forks, [{ sessionId: "s1", atSeq: 9, increaseTitle: true }], "the fork branches at the turn end");
+	assert.deepEqual(opened, ["child-1"], "the forked session opens");
+	run.dispose();
+	ui.dispose();
+});
+
+test("an inline file body folds its unchanged runs behind a bar that opens on demand", async () => {
+	const lines = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`);
+	const before = lines.join("\n");
+	const after = [...lines.slice(0, 4), "line 5 changed", ...lines.slice(5)].join("\n");
+	const rich = {
+		...record,
+		before,
+		after,
+		hunks: [{ oldStart: 5, oldLines: 1, newStart: 5, newLines: 1, rows: [
+			{ t: "-", s: "line 5", old: 5, new: null },
+			{ t: "+", s: "line 5 changed", old: null, new: 5 }
+		] }]
+	};
+	const ui = await setupHooks(async () => ({ ok: true, value: { root: "/work", records: [rich] } }));
+	ui.render(ui.pane, { sessionId: "s1" }); await settle();
+	const view = ui.render(ui.pane, { sessionId: "s1" });
+	const body = findComponent(view, "DiffBody");
+	assert.ok(body, "the flat section renders the file body inline");
+	const run = hookRunner();
+	Object.assign(ui.hooks, run.hooks);
+	let file = run.render(body.type, body.props);
+	const bars = collectNodes(file, "ld-gap");
+	assert.equal(bars.length, 2, "unchanged runs before and after the change are folded");
+	assert.match(textOf(bars[0]), /4 unchanged lines/);
+	assert.doesNotMatch(textOf(file), /line 1/, "folded lines are not rendered");
+	bars[0].props.onClick();
+	file = run.render(body.type, body.props);
+	assert.match(textOf(file), /line 1/, "the bar opens those lines");
+	run.dispose();
+	ui.dispose();
 });
 
 
@@ -881,13 +940,10 @@ test("mixed call hydration renders only exact visible list identities while inli
  const net={...record,id:"checkpoint:1:a",callId:"checkpoint:1",path:"a",turn:1};
  const ui=await setupHooks(async(_c,endpoint,payload)=>({ok:true,value:{records:endpoint==="detail" ? payload.callId==="c1"?[covered,secret]:[net] : [{...secret,hunks:undefined},{...net,hunks:undefined}]}}));
  ui.render(ui.pane,{sessionId:"s1"});await settle();const view=ui.render(ui.pane,{sessionId:"s1"});
- assert.equal(collectNodes(view,"ld-frow").length,0,"the index is folded by default");
+ assert.equal(collectNodes(view,"ld-flatfile").length,2,"every visible file gets its own section");
  assert.doesNotMatch(textOf(view),/hidden-original/);assert.doesNotMatch(textOf(view),/secret/);
- findButton(view,"ld-fileshead").props.onClick();
- const opened=ui.render(ui.pane,{sessionId:"s1"});
- assert.equal(collectNodes(opened,"ld-frow").length,2);
- assert.equal(findButton(opened,"ld-frow").props["aria-selected"],true);
- assert.doesNotMatch(textOf(opened),/hidden-original/);assert.doesNotMatch(textOf(opened),/secret/);ui.dispose();
+ assert.equal(collectNodes(view,"ld-frow").length,0,"the old file index is gone");
+ ui.dispose();
 });
 test("numeric historical footer carries the same bounded window into review and Keep",async()=>{
  const requests=[];const old={...record,time:150};

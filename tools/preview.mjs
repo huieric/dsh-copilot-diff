@@ -457,6 +457,7 @@ function buildPage(bundleCss) {
 			createElement("div", { className: "pv-rows" }, rows),
 			Footer === undefined ? null : createElement(Footer, {
 				turn: turn,
+				seq: 1930,
 				sessionId: "s1",
 				openFile: common.openFile,
 				t: t

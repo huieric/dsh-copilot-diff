@@ -14,25 +14,29 @@ try {
 	await page.goto(pathToFileURL(resolve('output/playwright/preview.html')).href);
 	await page.waitForLoadState('networkidle');
 
-	// Open the pane from the turn's compact chip row; the index starts folded.
+	// Open the pane from the turn card; every file is flattened into one column.
 	await page.locator('.ld-turnrow').first().click();
-	await page.locator('.ld-pane .ld-editorbody .ld-text').first().waitFor();
+	await page.locator('.ld-pane .ld-flatfile').first().waitFor();
 	await page.screenshot({ path: 'docs/screenshots/overview.png', fullPage: true });
-
-	await page.locator('.ld-pane .ld-fileshead').click();
-	await page.locator('.ld-pane .ld-frow').first().waitFor();
 	await page.locator('.ld-pane').screenshot({ path: 'docs/screenshots/expanded.png' });
-	await page.locator('.ld-pane .ld-frow').first().click();
+
+	// One unchanged run opened, so the bar's effect is visible.
+	await page.locator('.ld-pane .ld-gap').first().click();
+	await page.locator('.ld-pane .ld-gap.open').first().waitFor();
+	await page.locator('.ld-pane').screenshot({ path: 'docs/screenshots/unchanged.png' });
+
+	// The turn boundary row: checkpoint restore and fork.
+	await page.locator('.ld-turnfoot').screenshot({ path: 'docs/screenshots/boundary.png' });
 
 	// Chat side: the edit row at its real tool call, expanded in place.
 	await page.locator('.pv-rows .ld-toggle').first().click();
 	await page.locator('.ld-diff .ld-difflines').first().waitFor();
 	await page.locator('.ld-diff').first().screenshot({ path: 'docs/screenshots/inline.png' });
 
-	// Side-by-side split of the whole file.
+	// Side-by-side split applies to every flattened section at once.
 	await page.getByRole('button', { name: /^(Side by side|并排)$/ }).click();
-	await page.locator('.ld-pane .ld-split').waitFor();
-	await page.locator('.ld-pane .ld-editorbody').screenshot({ path: 'docs/screenshots/split.png' });
+	await page.locator('.ld-pane .ld-split').first().waitFor();
+	await page.locator('.ld-pane').screenshot({ path: 'docs/screenshots/split.png' });
 	console.log(JSON.stringify({ ok: true }));
 } finally {
 	await page.close();
