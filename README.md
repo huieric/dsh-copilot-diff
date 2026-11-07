@@ -20,7 +20,7 @@
 
 > 第三张图里的 `替换 rotator.h +3 −3` 没有任何服务端记录——它完全是靠调用参数画出来的，这也是被 `dsh-chat-import` 导入的 Copilot 历史会话能显示 diff 的原因。
 >
-> 命令行（`sed`、`python -c`、脚本）一次调用可能改多个文件、也可能改在别处，没有逐命令归属，所以只在轮末的 `N 个文件已修改` 里按轮汇总；`edit` / `write` / `apply_patch` / `str_replace_editor` 这类文件工具则在各自的调用行就地显示 diff。
+> 命令行（`sed -i`、Python 脚本、重定向）一次调用可能改多个文件、也可能改在别处，宿主不提供逐命令归属，所以只能按轮汇总。0.4.1 起默认开启**命令行改写保护**：这类静默改写会在执行前被拒绝，并提示模型改用 `edit` / `write` / `apply_patch`，于是 diff 总能长在真实的编辑调用行里。
 
 > `@@` 块头只在没有全文、退回按 hunk 渲染时出现；有快照时就与 VS Code 的 diff 编辑器一样，只保留行号与增删底色。
 
@@ -30,6 +30,7 @@
 | --- | --- |
 | 每次修改自动追踪 | 观察 `edit` / `write` / `apply_patch`，以及编辑器风格的 `replace_string_in_file` / `multi_replace_string_in_file` / `edit_file` / `multi_edit` / `create_file` / `write_to_file`；一次调用 = 一条独立记录（一次改多个文件时按文件各记一条） |
 | 换字符串也能看 diff | 这类工具的结果里没有修改前后的全文，所以在调用前先快照目标文件、调用后再读一遍，用两份文本算 diff；连快照都拿不到时（导入的历史记录、绕过工具管线的调用）就直接用参数里的 `oldString` / `newString` 画片段 |
+| 命令行改写保护 | 默认拦截 `sed -i`、`perl -i`、写文件的 Python heredoc、`tee`／`>` 重定向、`dd`、`truncate`、`git apply/checkout/restore`、`patch`；`node_modules`、`dist`、`build`、`output`、`/tmp` 等可写目录放行。命中时工具在真正执行前返回明确错误，引导模型改用文件工具，从而保证每条修改都有就地 diff、可 Keep/Undo/恢复 |
 | 就地 diff | 编辑 diff 出现在真实的工具调用行内，默认收起（与 Copilot 的步骤行一致），点开才是双侧行号、增删底色；有全文快照时显示整文件上下文，未改动区折叠为「⋯ N 行未改动」 |
 | 增删统计 | 动作行右侧常驻 `+A −R`，与 Copilot 的动作行一致 |
 | 轮级统计就在「已完成」行 | 轮到 `+A −R` 显示在助手消息开头那行「已完成，用时 …」后面，点击打开右侧审阅面板——与 Copilot 的 action header 位置一致 |
@@ -145,6 +146,17 @@ DSH_INSTALL=/path/to/node_modules/@deepseek-ai/dsh node tools/host-fs-smoke.mjs
 - diff 是手写的：先剥掉公共前后缀，再按「两侧唯一出现的同一行」递归切分，小区域用 LCS（DP 上限 100 万格），都不满足就退化成整段替换——所以超大补丁不会卡住，也不会退化成一屏红色。
 - 撤销不做「按块」或「按行」的猜测：整条记录只有 before/after 两个版本，写回前先读盘比对，不一致就拒绝。宁可少撤，不可误撤。
 
+## 命令行改写保护
+
+VS Code Copilot 的 working set 只统计文件工具与编辑器写入；shell 里 `sed -i`、Python `write_text` 之类的静默改写既不能逐调用归属，也无法在聊天里就近展示。本插件因此默认在 `tools/pre-execute` 拦截这类命令：
+
+- 拦截：`sed -i`、`perl -pi`、写文件的 `python - <<'PY'` / `python -c`、`tee`、`>`/`>>` 重定向、`dd of=`、`truncate`、`git apply|checkout --|restore|reset --hard|clean -f`、`patch`。
+- 放行：只读命令、`node_modules` / `.git` / `dist` / `build` / `out` / `output` / `coverage` / `.cache` / `target` / `tmp` 等构建或缓存目录、`/tmp`、`/var/tmp`、`/dev/null`。
+- 命中后模型收到明确错误，提示改用 `edit` / `write` / `apply_patch` / `str_replace_editor`，于是改动会出现在真实编辑行并带完整 diff。
+- 需要保留某些脚本化流程时，启动前设置 `DSH_COPILOT_DIFF_GUARD=off`；关闭后 shell 改写仍会被逐轮快照记录，但只在轮末汇总。
+
+这是启发式检查，不是安全边界：动态拼接、变量展开或自定义解释器都可能绕过；它解决的是“模型顺手用 shell 改源码导致 diff 丢失”的常见情形。
+
 ## 已知限制
 
 - 0.3.0 起，聊天内联与 Changes 面板共用同一份有界快照；单条记录的前后文本合计超过 4 MiB 时 `file-text` 返回 `hasText:false`，界面退回 hunk 并标明原因，不会截断后冒充全文。
@@ -167,11 +179,12 @@ node tools/backfill.mjs --dry
 - 历史回填依赖会话日志里能拿到前后文本：`apply_patch` 只写补丁、`dshFileReview` 元数据又缺失时，这条调用补不出来。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 本分支为 `0.4.0` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
+- 本分支为 `0.4.1` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
 
 ## 变更记录
 
-- `0.4.0`（本分支）— 忠实执行顺序与滚动性能：去掉“展开轮次后平铺整轮文件列表”的汇总视图，编辑重新出现在各自的 `tool.call` 位置（`tool.call.toolview`），轮次头只保留完成状态、`+A −R` 与 Restore Checkpoint；整文件 diff 改为固定 22px 行高的窗口化渲染（>240 行启用），`fullRows` 结果按输入缓存、滚动用 rAF 节流，`1 of N` 跳转走 `navRef` 直接定位；Changes 面板加增删色条、40px 行号槽、26px 文件行、↑/↓ 切文件与“在编辑器中打开”；`str_replace_editor` 计入就地 diff；preview/smoke 支持虚拟滚动断言。
+- `0.4.1`（本分支）— 命令行改写保护：`tools/pre-execute` 在 bash 真正执行前检查命令，命中静默改文件模式时直接拒绝并给出改用文件工具的提示；默认开启，`DSH_COPILOT_DIFF_GUARD=off` 可关闭。Changes 面板的 Mark as Reviewed 现在会自动跳到下一个未审阅文件，标题旁显示 `已审阅/总数`。
+- `0.4.0`— 忠实执行顺序与滚动性能：去掉“展开轮次后平铺整轮文件列表”的汇总视图，编辑重新出现在各自的 `tool.call` 位置（`tool.call.toolview`），轮次头只保留完成状态、`+A −R` 与 Restore Checkpoint；整文件 diff 改为固定 22px 行高的窗口化渲染（>240 行启用），`fullRows` 结果按输入缓存、滚动用 rAF 节流，`1 of N` 跳转走 `navRef` 直接定位；Changes 面板加增删色条、40px 行号槽、26px 文件行、↑/↓ 切文件与“在编辑器中打开”；`str_replace_editor` 计入就地 diff；preview/smoke 支持虚拟滚动断言。
 - `0.3.0` — 对齐 Copilot Chat 的审阅 UI：展开轮次后每个编辑行就地显示 diff；整文件上下文（未改动区可展开）；右侧 Changes 面板重做为文件列表 + 整文件 diff 编辑器（Inline／Side by side、`1 of N` 导航、Mark as Reviewed、复制、按文件 Keep/Undo）；Restore Checkpoint 改为低调文字链接；新增 `file-text` RPC 与 4 MiB 上限；新建/删除文件也能渲染完整正文。
 
 - `0.2.0` — 持久化逐轮检查点与 shell 实际修改追踪；Restore Checkpoint 回到选中轮开始前；点击文件打开按轮定位的侧栏；完整 diff 加载、统一／左右对比与文件导航；净改动统计、迟到记录刷新和部分失败提示。大文件、非 UTF-8、符号链接及扫描限制明确排除，历史无快照的轮次不提供虚假恢复。
