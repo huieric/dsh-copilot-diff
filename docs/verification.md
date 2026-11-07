@@ -1,6 +1,6 @@
 # Verification and delivery notes
 
-Development branch: `feat/copilot-review-checkpoints`, isolated checkout `dsh-copilot-diff-review`, base `e03c2d2` (0.4.2). Candidate version `0.8.1`; no registry publish or GitHub push performed.
+Development branch: `feat/copilot-review-checkpoints`, isolated checkout `dsh-copilot-diff-review`, base `e03c2d2` (0.4.2). Release version `0.8.1`, merged into `main` and published to npm as `dsh-copilot-diff@0.8.1`; no GitHub push performed.
 
 ## Verified
 
