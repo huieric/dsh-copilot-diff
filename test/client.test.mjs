@@ -255,6 +255,56 @@ test("apply wires rows, the turn footer, the review panel, session badges and st
 	assert.ok(exported.inject.includes("sidebarRightTabs"));
 });
 
+test("a click on a host file row's numbers opens that change in the review panel", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx, openedTabs } = makeClientCtx({ mountedId: "s9" });
+	const listeners = [];
+	globalThis.document = {
+		head: { appendChild: (tag) => void tag },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" }),
+		addEventListener: (type, fn, capture) => void listeners.push({ type, fn, capture })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	assert.equal(listeners.length, 1, "one delegated click listener");
+	assert.equal(listeners[0].type, "click");
+	assert.equal(listeners[0].capture, true, "capture phase, so the row's own link never fires");
+
+	const row = { getAttribute: (name) => (name === "data-chat-call-id" ? "call-7" : null) };
+	const stats = { closest: (selector) => (selector === "[data-chat-call-id]" ? row : null) };
+	const numbers = { closest: (selector) => (selector.includes("diffStat") ? stats : null) };
+	const event = {
+		target: numbers,
+		prevented: 0,
+		stopped: 0,
+		preventDefault() {
+			this.prevented += 1;
+		},
+		stopPropagation() {
+			this.stopped += 1;
+		}
+	};
+	listeners[0].fn(event);
+	assert.deepEqual(openedTabs, [{ kind: "copilot-diff", opts: { revealIfOpened: true }, sessionId: "s9" }]);
+	assert.equal(event.prevented, 1);
+	assert.equal(event.stopped, 1);
+
+	const elsewhere = {
+		target: { closest: () => null },
+		preventDefault() {
+			throw new Error("a row without totals must keep its own click");
+		},
+		stopPropagation() {
+			throw new Error("a row without totals must keep its own click");
+		}
+	};
+	listeners[0].fn(elsewhere);
+	assert.equal(openedTabs.length, 1, "nothing else opens the panel");
+});
+
 /**
  * The component apply registered for one tool key, after a fresh apply.
  * @param exported - the bundle's exports.
