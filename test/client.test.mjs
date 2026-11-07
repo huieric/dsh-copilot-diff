@@ -433,6 +433,28 @@ test("the turn header carries this turn's totals on the completed line", async (
 	findButton(view, "ld-processbadge").props.onClick({ stopPropagation() {} });
 	assert.equal(openedTabs[0]?.kind, "copilot-diff", "the totals open the review panel");
 
+	// The totals sit before the chevron, and the chevron is the row's last control.
+	const head = collectNodes(view, "ld-processhead")[0];
+	const order = (head.props.children ?? []).flatMap((child) => String(child?.props?.className ?? "").split(/\s+/));
+	assert.ok(order.indexOf("ld-processbadge") < order.indexOf("ld-processchev"), "the totals come before the chevron");
+	assert.ok(order.indexOf("ld-processchev") < order.indexOf("ld-spacer"), "the chevron trails the totals");
+	const chevron = findButton(view, "ld-processchev");
+	assert.ok(chevron !== undefined, "a foldable turn still offers the chevron");
+	chevron.props.onClick({ stopPropagation() {} });
+	assert.deepEqual(opened, [true], "the chevron folds like the label");
+
+	queue = [{ key: "s1", value: { records: [inside] } }];
+	const stepped = Node({
+		...props,
+		node: { location: { kind: "turn", turn: { ...turn, steps: [{ step: 0 }, { step: 1 }, { step: 2 }] } } }
+	});
+	assert.match(textOf(stepped), /Completed 3 steps in 1m 5s/, "the finished line counts the turn's steps");
+
+	queue = [{ key: "s1", value: { records: [inside] } }];
+	const oneStep = Node({ ...props, node: { location: { kind: "turn", turn: { ...turn, steps: [{ step: 0 }] } } } });
+	assert.match(textOf(oneStep), /Completed 1 step in 1m 5s/, "one step is not plural");
+
+	opened.length = 0;
 	findButton(view, "ld-processlabel").props.onClick({ stopPropagation() {} });
 	assert.deepEqual(opened, [true], "the row still collapses and expands the process");
 

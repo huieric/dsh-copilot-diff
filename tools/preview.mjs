@@ -445,7 +445,8 @@ function buildPage(bundleCss) {
 						turn: {
 							status: "closed",
 							start: { data: { turn: 1 }, time: 1762457324000 },
-							end: { time: 1762459100000, data: { reason: { kind: "completed" } } }
+							end: { time: 1762459100000, data: { reason: { kind: "completed" } } },
+							steps: new Array(16)
 						}
 					}
 				},
