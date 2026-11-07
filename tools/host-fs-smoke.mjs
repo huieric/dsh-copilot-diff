@@ -1,0 +1,32 @@
+// Optional integration smoke against the installed DSH filesystem backend.
+// DSH_INSTALL points at a DSH installation containing node_modules/@deepseek-ai.
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { Checkpoints } from '../lib/checkpoints.js';
+const install = process.env.DSH_INSTALL;
+if (!install) throw new Error('Set DSH_INSTALL to the installed @deepseek-ai/dsh directory');
+const load = name => import(pathToFileURL(join(resolve(install), 'node_modules', '@deepseek-ai', name, 'lib/index.js')).href);
+const { Context } = await load('cordis');
+const { LocalFileSystem } = await load('dsh-fs-local');
+mkdirSync('output', { recursive: true });
+const dir = mkdtempSync(join(resolve('output'), 'copilot-host-fs-'));
+const root = join(dir, 'work'); mkdirSync(root);
+const fs = new LocalFileSystem(new Context(), { cwd: root, diffBasisMaxBytes: 524288 });
+writeFileSync(join(root, 'a.txt'), 'original\r\n');
+const cp = new Checkpoints('host-fs-smoke', { root: () => root, storage: join(dir, 'state'), fs });
+await cp.start(1);
+writeFileSync(join(root, 'a.txt'), 'modified\r\n');
+writeFileSync(join(root, 'new.txt'), 'created');
+await cp.end(1);
+const restored = await cp.restore(1);
+assert.deepEqual(restored.failures, []);
+assert.equal(readFileSync(join(root, 'a.txt'), 'utf8'), 'original\r\n');
+assert.equal(await fs.stat(await fs.resolve(join(root, 'new.txt'))), undefined);
+const target = await fs.resolve(join(root, 'a.txt'));
+const version = (await fs.stat(target)).version;
+writeFileSync(join(root, 'a.txt'), 'external');
+await assert.rejects(fs.writeText(target, 'overwrite', { kind: 'replaceIfVersion', version }));
+assert.equal(readFileSync(join(root, 'a.txt'), 'utf8'), 'external');
+console.log(JSON.stringify({ backend: 'installed DSH LocalFileSystem', restored: restored.restored, exactCRLF: true, creationRemoved: true, staleVersionRejected: true, fixture: dir }));

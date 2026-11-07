@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
+
 
 import { apply, inject } from "../lib/index.js";
 
@@ -39,7 +41,7 @@ test("declares every service it touches, so activation cannot fail on inject", (
  * Host stand-in: an in-memory file system, one workspace, and the two host
  * hooks the plugin uses (`connection.register`, `on("tools/result")`).
  */
-function makeHost() {
+function makeHost(root = "/work", actualFs) {
 	const files = new Map();
 	const listeners = new Map();
 	let handle = null;
@@ -60,7 +62,7 @@ function makeHost() {
 		}
 	};
 	const ctx = {
-		fs,
+		fs: actualFs ?? fs,
 		connection: {
 			register: (_ctx, _channel, handler) => {
 				handle = handler;
@@ -69,7 +71,7 @@ function makeHost() {
 				};
 			}
 		},
-		workspaceRegistry: { list: () => [{ path: "/work", sessionIds: ["s1"] }] },
+		workspaceRegistry: { list: () => [{ path: root, sessionIds: ["s1"] }] },
 		logger: { warn: () => {} },
 		on: (event, listener) => {
 			listeners.set(event, listener);
@@ -79,7 +81,7 @@ function makeHost() {
 		// Dynamic injection: run the callback now when the service is available,
 		// exactly like cordis does once `workspaceChanges` appears.
 		inject: (_deps, callback) => {
-			if (workspaceChanges !== undefined) callback({ ...ctx, workspaceChanges, logger: ctx.logger });
+			if (_deps.includes("workspaceChanges") && workspaceChanges !== undefined) callback({ ...ctx, workspaceChanges, logger: ctx.logger });
 			return () => {};
 		}
 	};
@@ -102,6 +104,7 @@ function makeHost() {
 		run,
 		emitSessionEvent,
 		emitExec: (exec, value) => emit(exec, { isError: false, value }),
+		emitError: (exec) => emit(exec, { isError: true }),
 		call: (endpoint, payload) => handle(endpoint, payload),
 		edit: (callId, path, before, after) =>
 			emit(
@@ -547,4 +550,211 @@ test("a save keeps the records another writer left in the same log", async () =>
 		);
 		await dispose();
 	});
+});
+
+
+function workspaceFs(writes) {
+	return {
+		resolve: async path => ({ targetKey: path }),
+		readText: async target => readFileSync(target.targetKey, "utf8"),
+		writeText: async (target, text) => { writes.push(target.targetKey); writeFileSync(target.targetKey, text); },
+		deleteFile: async target => { writes.push(target.targetKey); rmSync(target.targetKey); }
+	};
+}
+
+test("shell failure and background writes produce net turn review and survive Keep/restart/restore", async () => {
+	await withHome(async () => {
+		const root = mkdtempSync(join(tmpdir(), "copilot-workspace-")), writes = [];
+		try {
+			const fs = workspaceFs(writes), host = makeHost(root, fs);
+			const dispose = await apply(host.ctx);
+			writeFileSync(join(root, "a"), "original\n");
+			// Deliberately do not await the synchronous session observer, just as Host does.
+			host.emitSessionEvent({ type: "turn/start", time: Date.now(), data: { turn: 7 } });
+			const exec = { name: "bash", callId: "shell-1", agent: { id: "s1" }, arguments: { command: "sed" } };
+			await host.preExec(exec);
+			try { execFileSync("bash", ["-c", "sed -i s/original/changed/ a; exit 3"], { cwd: root }); } catch (error) { assert.equal(error.status, 3); }
+			await host.emitError(exec);
+			let review = await host.call("review-turn", { sessionId: "s1", turn: 7 });
+			assert.equal(review.value.records[0].before, "original\n");
+			assert.equal(review.value.records[0].after, "changed\n");
+			// A later background process writes after the shell result; end capture sees it.
+			writeFileSync(join(root, "a"), "final\n"); writeFileSync(join(root, "created"), "");
+			await host.emitSessionEvent({ type: "turn/end", time: Date.now(), data: { turn: 7 } });
+			review = await host.call("review-turn", { sessionId: "s1", turn: 7 });
+			assert.equal(review.value.records.length, 2);
+			assert.equal(review.value.records.find(r => r.path === "a").after, "final\n");
+			assert.equal((await host.call("list", { sessionId: "s1" })).value.totals.edits, 2);
+			assert.equal((await host.call("keep-turn", { sessionId: "s1", turn: 7 })).value.totals.open, 0);
+			await dispose();
+			const next = makeHost(root, fs), disposeNext = await apply(next.ctx);
+			assert.equal((await next.call("checkpoints", { sessionId: "s1" })).value.checkpoints[0].turn, 7);
+			const restored = await next.call("restore-checkpoint", { sessionId: "s1", turn: 7 });
+			assert.equal(restored.ok, true); assert.equal(restored.value.restored, 2);
+			assert.equal(restored.value.root, root); assert.equal(restored.value.totals.open, 0);
+			assert.equal(readFileSync(join(root, "a"), "utf8"), "original\n");
+			await disposeNext();
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+});
+
+test("editor plus shell uses net footer rows without double counts and original call detail remains", async () => {
+	await withHome(async () => {
+		const root = mkdtempSync(join(tmpdir(), "copilot-workspace-"));
+		try {
+			const host = makeHost(root, workspaceFs([])), dispose = await apply(host.ctx);
+			writeFileSync(join(root, "a"), "one\n");
+			await host.emitSessionEvent({ type: "turn/start", time: Date.now(), data: { turn: 1 } });
+			const exec = { name: "write", callId: "editor", agent: { id: "s1" }, arguments: { path: join(root, "a") } };
+			await host.preExec(exec); writeFileSync(join(root, "a"), "two\n");
+			await host.emitExec(exec, { path: join(root, "a"), before: "one\n", after: "two\n" });
+			execFileSync("python3", ["-c", "from pathlib import Path; Path('a').write_text('three\\n')"], { cwd: root });
+			await host.emitSessionEvent({ type: "turn/end", time: Date.now(), data: { turn: 1 } });
+			const listed = await host.call("list", { sessionId: "s1" });
+			assert.equal(listed.value.records.length, 1); assert.equal(listed.value.totals.added, 1);
+			assert.equal(listed.value.records[0].turn, 1);
+			const detail = await host.call("detail", { sessionId: "s1", callId: "editor" });
+			assert.equal(detail.value.records[0].after, "two\n");
+			const review = await host.call("review-turn", { sessionId: "s1", turn: 1 });
+			assert.equal(review.value.records[0].after, "three\n");
+			const kept = await host.call("keep", { sessionId: "s1", id: listed.value.records[0].id });
+			assert.equal(kept.value.totals.open, 0);
+			await host.emitSessionEvent({ type: "turn/start", time: Date.now(), data: { turn: 2 } });
+			assert.equal((await host.call("restore-checkpoint", { sessionId: "s1", turn: 1 })).ok, false);
+			await host.emitSessionEvent({ type: "turn/end", time: Date.now(), data: { turn: 2 } });
+			assert.equal((await host.call("revert-turn", { sessionId: "s1", turn: 1 })).ok, true);
+			await dispose();
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+});
+
+
+test("file-text serves bounded full context for inline diffs and refuses unknown edits", async () => {
+	await withHome(async () => {
+		const host = makeHost(), dispose = await apply(host.ctx);
+		host.files.set("/work/a", "one\ntwo\n");
+		await host.emitSessionEvent({ type: "turn/start", time: Date.now(), data: { turn: 1 } });
+		host.files.set("/work/a", "one\nTWO\n");
+		await host.emitExec({ name: "write", callId: "c1", agent: { id: "s1" } }, { path: "/work/a", before: "one\ntwo\n", after: "one\nTWO\n" });
+		await host.emitSessionEvent({ type: "turn/end", time: Date.now(), data: { turn: 1 } });
+		const byPath = await host.call("file-text", { sessionId: "s1", path: "/work/a", turn: 1 });
+		assert.equal(byPath.ok, true);
+		assert.equal(byPath.value.hasText, true);
+		assert.equal(byPath.value.before, "one\ntwo\n");
+		assert.equal(byPath.value.after, "one\nTWO\n");
+		assert.equal(byPath.value.hunks.length, 1);
+		const byId = await host.call("file-text", { sessionId: "s1", id: byPath.value.id });
+		assert.equal(byId.value.path, "/work/a", "the id form returns the same record");
+		assert.equal((await host.call("file-text", { sessionId: "s1", path: "/work/a", turn: 9 })).ok, false, "a different turn cannot borrow the text");
+		assert.equal((await host.call("file-text", { sessionId: "s1", path: "/work/missing" })).ok, false);
+		await dispose();
+	});
+});
+
+test("excluded editor files stay visible beside authoritative net rows", async () => {
+	await withHome(async () => {
+		const root = mkdtempSync(join(tmpdir(), "copilot-workspace-"));
+		try {
+			const host = makeHost(root, workspaceFs([])), dispose = await apply(host.ctx);
+			writeFileSync(join(root, "a"), "one"); writeFileSync(join(root, ".env"), "before");
+			await host.emitSessionEvent({ type: "turn/start", time: Date.now(), data: { turn: 1 } });
+			await host.edit("secret-editor", join(root, ".env"), "before", "after"); writeFileSync(join(root, ".env"), "after");
+			writeFileSync(join(root, "a"), "two");
+			await host.emitSessionEvent({ type: "turn/end", time: Date.now(), data: { turn: 1 } });
+			const listed = await host.call("list", { sessionId: "s1" });
+			assert.equal(listed.value.records.length, 2);
+			assert.equal((await host.call("review-turn", { sessionId: "s1", turn: 1 })).value.records.length, 2);
+			assert.equal((await host.call("detail", { sessionId: "s1", callId: "checkpoint:1" })).value.records.length, 1);
+			assert.equal((await host.call("revert-turn", { sessionId: "s1", turn: 1 })).ok, false, "bulk undo cannot silently omit uncovered edits");
+			await dispose();
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+});
+
+test("write result omitting original text cannot delete an existing file on Undo", async () => {
+	await withHome(async () => {
+		const host = makeHost(), dispose = await apply(host.ctx);
+		host.files.set("/work/a", "changed");
+		await host.emitExec({ name: "write", callId: "big", agent: { id: "s1" } }, { path: "/work/a", before: null, after: "changed", kind: "update" });
+		const result = await host.call("revert", { sessionId: "s1", id: "e1" });
+		assert.equal(result.ok, false); assert.equal(host.files.get("/work/a"), "changed");
+		await dispose();
+	});
+});
+
+
+test("original call Undo reconciles net state and retains starting snapshot through Restore", async () => {
+ await withHome(async()=>{
+  const root=mkdtempSync(join(tmpdir(),"copilot-reconcile-"));
+  try {
+   const host=makeHost(root,workspaceFs([]));const dispose=await apply(host.ctx);
+   writeFileSync(join(root,"a"),"one");await host.emitSessionEvent({type:"turn/start",time:100,data:{turn:1}});
+   writeFileSync(join(root,"a"),"two");await host.edit("original",join(root,"a"),"one","two");
+   await host.emitSessionEvent({type:"turn/end",time:200,data:{turn:1}});
+   const original=(await host.call("detail",{sessionId:"s1",callId:"original"})).value.records[0];
+   assert.equal((await host.call("revert",{sessionId:"s1",id:original.id})).ok,true);
+   const list=await host.call("list",{sessionId:"s1"});assert.equal(list.value.totals.open,0);
+   const review=await host.call("review-turn",{sessionId:"s1",turn:1});
+   assert.equal(review.value.records[0].before,"one");assert.equal(review.value.records[0].after,"one");
+   assert.equal((await host.call("restore-checkpoint",{sessionId:"s1",turn:1})).ok,true);
+   assert.equal(readFileSync(join(root,"a"),"utf8"),"one");await dispose();
+   const next=makeHost(root,workspaceFs([])),disposeNext=await apply(next.ctx);
+   assert.equal((await next.call("restore-checkpoint",{sessionId:"s1",turn:1})).ok,true);await disposeNext();
+  }finally{rmSync(root,{recursive:true,force:true});}
+ });
+});
+test("original Undo uses host CAS unions, recognizes FS_NOT_FOUND and reserves maintenance", async()=>{
+ await withHome(async()=>{
+  const versions=new Map(),files=new Map(),guards=[];let maintenance=0,inside=false,race=false;
+  const fs={resolve:async path=>({targetKey:path}),stat:async t=>{if(!files.has(t.targetKey))throw Object.assign(new Error("missing"),{code:"FS_NOT_FOUND"});return {version:versions.get(t.targetKey)};},readText:async t=>{if(!files.has(t.targetKey))throw Object.assign(new Error("missing"),{code:"FS_NOT_FOUND"});return files.get(t.targetKey);},
+   writeText:async(t,text,guard)=>{assert.equal(inside,true);guards.push(guard);if(race){files.set(t.targetKey,"external");versions.set(t.targetKey,2);}if(guard.kind==="replaceIfVersion" && guard.version!==versions.get(t.targetKey))throw new Error("version conflict");if(guard.kind==="createIfAbsent"&&files.has(t.targetKey))throw new Error("exists");files.set(t.targetKey,text);},
+   deleteFile:async(t,guard)=>{assert.equal(inside,true);guards.push(guard);if(race){files.set(t.targetKey,"external");versions.set(t.targetKey,2);}if(guard.version!==versions.get(t.targetKey))throw new Error("version conflict");files.delete(t.targetKey);}};
+  const host=makeHost("/work",fs),dispose=await apply(host.ctx);
+  const agent={id:"s1",runMaintenance:async fn=>{maintenance++;inside=true;try{return await fn();}finally{inside=false;}}};
+  await host.preExec({name:"noop",callId:"noop",agent});
+  await host.edit("deleted","/work/d","old",null);
+  assert.equal((await host.call("revert",{sessionId:"s1",id:"e1"})).ok,true);assert.deepEqual(guards[0],{kind:"createIfAbsent"});
+  files.set("/work/a","after");versions.set("/work/a",1);await host.edit("modified","/work/a","before","after");race=true;
+  assert.equal((await host.call("revert",{sessionId:"s1",id:"e2"})).ok,false);assert.equal(files.get("/work/a"),"external");assert.deepEqual(guards[1],{kind:"replaceIfVersion",version:1});
+  files.set("/work/new","created");versions.set("/work/new",1);await host.edit("created","/work/new",null,"created");
+  assert.equal((await host.call("revert",{sessionId:"s1",id:"e3"})).ok,false);assert.equal(files.get("/work/new"),"external");assert.deepEqual(guards[2],{version:1});assert.equal(maintenance,3);await dispose();
+ });
+});
+test("numeric historical review Keep and Undo use only legacy rows within selected window",async()=>{
+ await withHome(async()=>{
+  const host=makeHost(),dispose=await apply(host.ctx);
+  host.files.set("/work/a","after");await host.edit("old","/work/a","before","after");
+  host.files.set("/work/b","later");await host.edit("neighbor","/work/b","old","later");
+  const detail=(await host.call("detail",{sessionId:"s1",callId:"old"})).value.records[0];detail.time=100;
+  (await host.call("detail",{sessionId:"s1",callId:"neighbor"})).value.records[0].time=300;
+  const scope={sessionId:"s1",turn:1,from:50,to:150};
+  assert.equal((await host.call("review-turn",scope)).value.records.length,1);
+  assert.equal((await host.call("review-turn",{sessionId:"s1",turn:1})).value.records.length,0);
+  assert.equal((await host.call("keep-turn",{sessionId:"s1",turn:1})).value.changed,0);
+  assert.equal((await host.call("keep-turn",scope)).value.changed,1);
+  // Kept original records remain individually undoable; turn Undo selects open only.
+  detail.state="open";assert.equal((await host.call("revert-turn",scope)).value.reverted,1);
+  assert.equal(host.files.get("/work/a"),"before");assert.equal(host.files.get("/work/b"),"later");
+  assert.equal((await host.call("restore-checkpoint",scope)).ok,false);await dispose();
+ });
+});
+
+test("mixed apply_patch RPC list identities hydrate without covered original duplicates",async()=>{
+ await withHome(async()=>{
+  const root=mkdtempSync(join(tmpdir(),"copilot-mixed-"));
+  try{
+   const host=makeHost(root,workspaceFs([])),dispose=await apply(host.ctx);
+   writeFileSync(join(root,"a"),"one");writeFileSync(join(root,".env"),"secret");
+   await host.emitSessionEvent({type:"turn/start",time:Date.now(),data:{turn:1}});
+   writeFileSync(join(root,"a"),"two");writeFileSync(join(root,".env"),"updated");
+   await host.patch("mixed",[{kind:"update",status:"completed",changes:[{path:join(root,"a"),before:"one",after:"two"}]},{kind:"update",status:"completed",changes:[{path:join(root,".env"),before:"secret",after:"updated"}]}]);
+   await host.emitSessionEvent({type:"turn/end",time:Date.now(),data:{turn:1}});
+   const list=(await host.call("list",{sessionId:"s1"})).value.records;
+   assert.equal(list.length,2);
+   const ids=new Set(list.map(r=>r.id));const details=[];
+   for(const callId of new Set(list.map(r=>r.callId)))details.push(...(await host.call("detail",{sessionId:"s1",callId})).value.records);
+   assert.equal(details.length,3);assert.equal(details.filter(r=>ids.has(r.id)).length,2);
+   assert.equal((await host.call("detail",{sessionId:"s1",callId:"mixed"})).value.records.length,2);await dispose();
+  }finally{rmSync(root,{recursive:true,force:true});}
+ });
 });

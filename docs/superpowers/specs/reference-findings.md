@@ -1,0 +1,10 @@
+# Reference findings (2026-11-07)
+
+- Base https://github.com/huieric/dsh-copilot-diff at e734ab3 / 0.1.13; clean baseline 41/41 node tests. Existing edit rows, turn-process replacement, footer, right-sidebar tab and trusted-host connection channel.
+- https://github.com/cirelir/dsh-change-review (README fetched): session isolation, per-turn vs session scope, file review, conflict refusal, persisted before/after, request sequencing on session/file switches. Reference for scope correctness; do not copy its unrelated editor launch routes or style settings.
+- https://github.com/9087/dsh-diff-approval / locally installed 0.37.4: approval and review occupy tool.call.toolview keys; currently not active in web bundle list. Reference for guarded filesystem mutations, not an additional dependency.
+- https://github.com/mixin-ai/dsh-file-changes (README fetched): compact per-turn file list, status badges, per-file actual applied diff, nested Code Mode records; explicitly does not detect indirect shell changes and loses host ring on restart. Reference for turn-tail grouping; new snapshots address shell/restart limitations.
+- Host workspaceChanges exposes only ephemeral summary/diff, not restore or full file text; private git objects disappear on disposal.
+- Host session/event observers synchronous; async return not awaited. tools/pre-execute middleware must await queued capture before tool runs. agent/turn-stopping is a serial awaited boundary; runMaintenance is idle-only serialized maintenance API.
+- No additive turnHead slot. Existing plugin replaces conversation.chat.node key turn-process, so checkpoint prefix belongs there; user.before chain is source-decoration selection with no turn identity.
+- Actual GUI http://127.0.0.1:3080 answers 401 in fresh browser context. Existing CDP http://127.0.0.1:9333 works, has a page on port 3099; preserve it. New Chromium launch fails missing libatk, use existing CDP separate new page for synthetic fixture verification. Do not claim fixture is actual GUI installation.

@@ -85,13 +85,64 @@ var ENTRIES = [
 	}
 ];
 
-var SESSIONS = [
-	{ id: "s1", title: "优化 interval checker 运行效率", totals: { edits: 4, files: 4, open: 4, openFiles: 4, added: 328, removed: 62 }, rel: "刚刚" },
-	{ id: "s2", title: "增加 Level 2 行情支持", totals: { edits: 9, files: 6, open: 0, openFiles: 0, added: 1644, removed: 544 }, rel: "2 小时前" },
-	{ id: "s3", title: "修改配置读取 fc 路径", totals: { edits: 2, files: 2, open: 2, openFiles: 2, added: 7, removed: 4 }, rel: "昨天" },
-	{ id: "s4", title: "更新 updater.cpp 逻辑", totals: { edits: 1, files: 1, open: 1, openFiles: 1, added: 163, removed: 3 }, rel: "3 天前" }
-];
-var TOTALS = { edits: 4, files: 4, open: 4, openFiles: 4, added: 328, removed: 62 };
+ENTRIES.forEach(function (entry) {
+	entry.turn = 1;
+	entry.hunks.forEach(function (hunk) { hunk.oldLines = hunk.rows.filter(function (row) { return row.t !== "+"; }).length; hunk.newLines = hunk.rows.filter(function (row) { return row.t !== "-"; }).length; });
+	entry.added = entry.hunks.reduce(function (n, hunk) { return n + hunk.rows.filter(function (row) { return row.t === "+"; }).length; }, 0);
+	entry.removed = entry.hunks.reduce(function (n, hunk) { return n + hunk.rows.filter(function (row) { return row.t === "-"; }).length; }, 0);
+});
+// Every edit carries full before/after text in the fixture: the pane shows the
+// whole file with folded unchanged regions instead of only the hunk.
+function synthesizeText(entry) {
+	var oldMax = 0, newMax = 0;
+	entry.hunks.forEach(function (hunk) {
+		oldMax = Math.max(oldMax, hunk.oldStart + hunk.oldLines - 1);
+		newMax = Math.max(newMax, hunk.newStart + hunk.newLines - 1);
+	});
+	var before = [], after = [];
+	for (var i = 1; i <= oldMax; i++) before.push("    // line " + i);
+	for (var j = 1; j <= newMax; j++) after.push("    // line " + j);
+	entry.hunks.forEach(function (hunk) {
+		hunk.rows.forEach(function (row) {
+			if (row.old !== null && row.old !== undefined) before[row.old - 1] = row.s;
+			if (row.new !== null && row.new !== undefined) after[row.new - 1] = row.s;
+		});
+	});
+	var padOld = Math.max(entry.pad || 0, oldMax);
+	var padNew = Math.max(entry.padNew || entry.pad || 0, newMax);
+	for (var k = oldMax + 1; k <= padOld; k++) before.push("    // line " + k);
+	for (var m = newMax + 1; m <= padNew; m++) after.push("    // line " + m);
+	entry.before = oldMax === 0 && padOld === 0 ? "" : before.join("\n") + "\n";
+	entry.after = newMax === 0 && padNew === 0 ? "" : after.join("\n") + "\n";
+}
+// A large file proves the pane only mounts the rows that are on screen.
+ENTRIES[3].pad = 1200;
+ENTRIES[3].padNew = 1201;
+ENTRIES.forEach(function (entry) { if (entry.id !== "e1") synthesizeText(entry); });
+// One edit carries full before/after text, so the pane can show the whole file
+// with folded unchanged regions instead of only the hunk.
+(function () {
+	var beforeLines = [];
+	for (var i = 1; i <= 60; i++) beforeLines.push("    // slot bookkeeping " + i);
+	beforeLines[40] = "void SlotRotator::rotate(const Spin& spin) {";
+	beforeLines[41] = "    if (spin.value > 0) {";
+	beforeLines[42] = "        advanceBy(spin.value);";
+	beforeLines[43] = "    }";
+	var afterLines = beforeLines.slice();
+	afterLines[41] = "    if (spin.value >= kStopThreshold) {";
+	afterLines[42] = "        advanceBy(remap(spin.value));";
+	ENTRIES[0].before = beforeLines.join("\n") + "\n";
+	ENTRIES[0].after = afterLines.join("\n") + "\n";
+})();
+
+var CHECKPOINTS = [{ turn: 1, time: 1762457324000, status: "ready", files: ENTRIES.map(function (entry) { return entry.path; }), limitations: ["Synthetic fixture only; no workspace files are written."] }];
+function summary(records) {
+	var open = records.filter(function (entry) { return entry.state === "open"; });
+	return { edits: records.length, files: new Set(records.map(function (entry) { return entry.path; })).size, open: open.length, openFiles: new Set(open.map(function (entry) { return entry.path; })).size, added: records.reduce(function (n, entry) { return n + entry.added; }, 0), removed: records.reduce(function (n, entry) { return n + entry.removed; }, 0) };
+}
+function snapshot(records) { return { sessionId: "s1", root: "/work/product", totals: summary(records), records: records, checkpoints: CHECKPOINTS }; }
+var SESSIONS = [{ id: "s1", title: "Synthetic review demo", totals: summary(ENTRIES), rel: "Fixture" }];
+var TOTALS = summary(ENTRIES);
 //#endregion
 
 //#region mini renderer
@@ -157,7 +208,7 @@ var react = {
 		var index = hookIndex++;
 		var slot = instance.hooks[index];
 		if (slot === undefined || deps === undefined || !sameDeps(slot.deps, deps)) {
-			instance.hooks[index] = { deps: deps };
+			instance.hooks[index] = { deps: deps, cleanup: slot && slot.cleanup };
 			pendingEffects.push({ instance: instance, index: index, fn: fn });
 		}
 	}
@@ -199,14 +250,22 @@ function renderNode(node, parent, path) {
 	Object.keys(props).forEach(function (prop) {
 		var value = props[prop];
 		if (prop === "children" || prop === "key") return;
+		if (prop === "ref") { if (typeof value === "function") setTimeout(function () { value(element); }, 0); return; }
 		if (prop === "className") element.setAttribute("class", value);
 		else if (prop === "viewBox" || prop === "ariaHidden" || /^(stroke|fill)/.test(prop)) {
 			// SVG keeps viewBox camelCased; only stroke*/fill* props are dashed.
 			var name = prop === "viewBox" ? "viewBox" : prop.replace(/[A-Z]/g, function (letter) { return "-" + letter.toLowerCase(); });
 			if (value !== false && value !== null && value !== undefined) element.setAttribute(name, String(value));
 		}
-		else if (prop === "onClick") {
-			element.addEventListener("click", function (event) { value(event); });
+		else if (prop === "style" && value !== null && typeof value === "object") {
+			Object.keys(value).forEach(function (key) {
+				var css = String(value[key]);
+				element.style[key] = /^\d+(\.\d+)?$/.test(css) ? css + "px" : css;
+			});
+		}
+		else if (prop === "onClick" || prop === "onChange" || prop === "onScroll") {
+			var eventName = prop === "onClick" ? "click" : prop === "onChange" ? "change" : "scroll";
+			element.addEventListener(eventName, function (event) { value(event); });
 		} else if (prop === "disabled") {
 			if (value) element.setAttribute("disabled", "");
 		} else if (value === undefined || value === null || value === false) return;
@@ -214,6 +273,7 @@ function renderNode(node, parent, path) {
 	});
 	parent.appendChild(element);
 	renderNode(props.children, element, path);
+	if (props.value !== undefined) element.value = props.value;
 }
 
 function flushEffects() {
@@ -250,14 +310,33 @@ var connection = {
 					value: { records: ENTRIES.filter(function (entry) { return entry.callId === callId; }) }
 				});
 			}
-			if (endpoint === "list") return Promise.resolve({ ok: true, value: { sessionId: "s1", totals: TOTALS, records: ENTRIES } });
+			if (endpoint === "list") return Promise.resolve({ ok: true, value: snapshot(ENTRIES.map(function (entry) { var copy = Object.assign({}, entry); delete copy.hunks; delete copy.before; delete copy.after; return copy; })) });
+			if (endpoint === "review-turn") return Promise.resolve({ ok: true, value: snapshot(ENTRIES.filter(function (entry) { return entry.turn === payload.turn; })) });
+			if (endpoint === "file-text") {
+				var edit = ENTRIES.find(function (entry) {
+					return (payload.id !== undefined && entry.id === payload.id) || (payload.id === undefined && entry.path === payload.path);
+				});
+				if (edit === undefined) return Promise.resolve({ ok: false, error: { message: "No such edit" } });
+				var copy = Object.assign({}, edit, { hasText: typeof edit.before === "string" && typeof edit.after === "string" });
+				return Promise.resolve({ ok: true, value: copy });
+			}
+			if (endpoint === "checkpoints") return Promise.resolve({ ok: true, value: { checkpoints: CHECKPOINTS } });
+			if (endpoint === "restore-checkpoint") {
+				ENTRIES.forEach(function (entry) { entry.state = "reverted"; });
+				return Promise.resolve({ ok: true, value: Object.assign(snapshot(ENTRIES), { restored: ENTRIES.length, failures: [] }) });
+			}
 			if (endpoint === "summaries") {
 				var sums = {};
 				SESSIONS.forEach(function (session) { sums[session.id] = session.totals; });
 				return Promise.resolve({ ok: true, value: { sums: sums } });
 			}
 			if (endpoint === "keep" || endpoint === "revert" || endpoint === "keep-all" || endpoint === "revert-all" || endpoint === "keep-turn" || endpoint === "revert-turn") {
-				return Promise.resolve({ ok: true, value: { sessionId: "s1", totals: TOTALS, records: ENTRIES } });
+				ENTRIES.forEach(function (entry) {
+					if (payload.id && entry.id !== payload.id) return;
+					if (payload.turn !== undefined && entry.turn !== payload.turn) return;
+					entry.state = endpoint.indexOf("keep") === 0 ? "kept" : "reverted";
+				});
+				return Promise.resolve({ ok: true, value: snapshot(ENTRIES) });
 			}
 			return Promise.resolve({ ok: false, error: { message: "unknown endpoint " + endpoint } });
 		}
@@ -277,7 +356,7 @@ function makeContext() {
 	return {
 		get: function (name) {
 			if (name === "connection") return connection;
-			if (name === "sidebarRight") return { openTab: function () {} };
+			if (name === "sidebarRight") return { mounted: { getSnapshot: function () { return "s1"; }, subscribe: function () { return function () {}; } }, openTab: function () {} };
 			if (name === "sidebarRightTabs") return { register: function () { return function () {}; } };
 			return undefined;
 		},
@@ -312,9 +391,9 @@ function buildPage(bundleCss) {
 	var Pane = findBySlot("sidebar.right.pane.tab");
 	var Badge = findBySlot("sidebar.workspaces.session.row.action");
 	var Process = findBySlot("conversation.chat.node/turn-process");
-	var Footer = findBySlot("conversation.chat.turnTail");
-	var Process = findBySlot("conversation.chat.node/turn-process");
-	var turn = { start: { time: 1762457324000 }, end: { time: 1762459100000, data: { reason: { kind: "completed" } } }, steps: new Array(81), status: "closed" };
+	var Footer = findBySlot("conversation.chat.turnTail/dsh-copilot-diff");
+	var Boundary = findBySlot("conversation.chat.turnTail/dsh-copilot-diff-boundary");
+	var turn = { turn: 1, start: { data: { turn: 1 }, time: 1762457324000 }, end: { time: 1762459100000, data: { reason: { kind: "completed" } } }, steps: new Array(81), status: "closed" };
 	var common = { cwd: "/work/product", home: "/home/dev", openFile: function () {}, t: t };
 
 	var sessions = SESSIONS.map(function (session) {
@@ -355,7 +434,7 @@ function buildPage(bundleCss) {
 
 	var tree = createElement("div", { className: "pv-app" },
 		createElement("aside", { className: "pv-side" },
-			createElement("div", { className: "pv-sidehead" }, "会话"),
+			createElement("div", { className: "pv-sidehead" }, "Synthetic component fixture — invented data"),
 			createElement("div", { className: "pv-sessions" }, sessions)
 		),
 		createElement("main", { className: "pv-chat" },
@@ -366,20 +445,28 @@ function buildPage(bundleCss) {
 						kind: "turn",
 						turn: {
 							status: "closed",
-							start: { time: 1762457324000 },
-							end: { time: 1762459100000, data: { reason: { kind: "completed" } } }
+							start: { data: { turn: 1 }, time: 1762457324000 },
+							end: { time: 1762459100000, data: { reason: { kind: "completed" } } },
+							steps: new Array(16)
 						}
 					}
 				},
-				turnProcess: { foldable: true, hasContent: true, open: false, setOpen: function () {} },
+				turnProcess: { foldable: true, hasContent: true, open: true, setOpen: function () {} },
 				sessionId: "s1",
 				t: t
 			}),
 			createElement("div", { className: "pv-rows" }, rows),
 			Footer === undefined ? null : createElement(Footer, {
 				turn: turn,
+				seq: 1930,
 				sessionId: "s1",
 				openFile: common.openFile,
+				t: t
+			}),
+			Boundary === undefined ? null : createElement(Boundary, {
+				turn: turn,
+				seq: 1930,
+				sessionId: "s1",
 				t: t
 			})
 		),
@@ -457,7 +544,7 @@ const theme = `
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: #101113; color: var(--dsw-alias-label-primary);
 	font: 13px/1.55 "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
-.pv-app { display: grid; grid-template-columns: 236px minmax(0, 1fr) 384px; gap: 10px; height: 100vh; padding: 10px; }
+.pv-app { display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(380px, 45%); gap: 10px; height: 100vh; padding: 10px; }
 .pv-side, .pv-chat, .pv-pane { background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l1);
 	border-radius: var(--dsw-radius-lg); overflow: hidden; display: flex; flex-direction: column; }
 .pv-sidehead, .pv-panehead { padding: 10px 14px; font-size: 12px; letter-spacing: .04em;
@@ -480,7 +567,7 @@ const page = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>dsh-copilot-diff preview</title>
+<title>dsh-copilot-diff synthetic interactive fixture</title>
 <style>${theme}</style>
 <style id="plugin-css"></style>
 </head>
