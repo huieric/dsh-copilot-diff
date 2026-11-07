@@ -19,8 +19,14 @@ try {
 
   // Footer file selection scopes the pane to this turn, like Copilot's request row.
   await page.locator('.ld-fileitem').first().click();
-  // Changes view: pick a file from the compact list, render whole-file diff.
+  // Changes view: the file index starts folded; open it, then pick a file and
+  // watch it fold away again so the diff owns the pane.
+  assert.equal(await page.locator('.ld-frow').count(), 0, 'the file index must start folded');
+  assert.equal(await page.locator('.ld-pane .ld-fileschevron').innerText(), '›', 'the folded index keeps a chevron affordance');
+  await page.locator('.ld-fileshead').click();
+  await page.locator('.ld-pane .ld-fileschevron[data-open]').waitFor();
   await page.locator('.ld-frow').first().click();
+  assert.equal(await page.locator('.ld-frow').count(), 0, 'choosing a file folds the index');
   await page.locator('.ld-pane .ld-editorbody .ld-text').first().waitFor();
   await page.getByRole('button', { name: /Keep (?:Turn 1|第 1 轮)/ }).waitFor();
   const text = await page.locator('.ld-pane').innerText();
@@ -39,6 +45,7 @@ try {
   await page.getByRole('button', { name: /^(Side by side|并排)$/ }).click();
   await page.locator('.ld-pane .ld-split').waitFor();
   const firstPath = await page.locator('.ld-editorpath').innerText();
+  await page.locator('.ld-fileshead').click();
   await page.locator('.ld-frow').nth(1).click();
   await page.waitForFunction((previous) => document.querySelector('.ld-editorpath')?.innerText !== previous, firstPath);
   assert.notEqual(await page.locator('.ld-editorpath').innerText(), firstPath, 'file list switches the diff');
@@ -54,6 +61,7 @@ try {
 
   // Whole-file virtualization: expanding every gap mounts a 1200-line file but
   // only the visible window exists in the DOM.
+  await page.locator('.ld-fileshead').click();
   await page.locator('.ld-frow').nth(3).click();
   await page.getByRole('button', { name: /^(Inline|统一)$/ }).click();
   await page.getByRole('button', { name: /^(Expand unchanged|展开未改动)$/ }).click();

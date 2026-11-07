@@ -485,7 +485,9 @@ test("the expanded turn leaves the real steps in place and the footer lists the 
 	const footer = Footer({ turn, sessionId: "s1", t });
 	const items = collectNodes(footer, "ld-fileitem");
 	assert.equal(items.length, 1, "the footer lists the changed files");
-	assert.match(textOf(items[0]), /\+4/);
+	assert.match(textOf(items[0]), /a\.js/);
+	assert.match(textOf(footer), /\+4/, "the chip carries the line stats");
+	assert.equal(collectNodes(footer, "ld-fchip").length, 1, "each file is one compact chip");
 });
 
 test("the whole-file diff folds untouched context and reveals it on demand", async () => {
@@ -537,6 +539,9 @@ test("a created or deleted file renders its whole body without a hunk bar", asyn
 	let view = ui.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(view), /one/, "a created file renders its body");
 	assert.doesNotMatch(textOf(view), /@@/, "whole-file views have no hunk bars");
+	assert.equal(collectNodes(view, "ld-frow").length, 0, "the file index starts folded");
+	findButton(view, "ld-fileshead").props.onClick();
+	view = ui.render(ui.pane, { sessionId: "s1" });
 	collectNodes(view, "ld-frow")[1].props.onClick();
 	view = ui.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(view), /gone/, "the deleted file body is rendered from full text");
@@ -663,12 +668,12 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 	await buttons.find((b) => b.props["aria-label"] === "Keep Turn 7").props.onClick();
 	assert.ok(requests.some((r) => r.endpoint === "keep-turn" && r.payload.turn === 7));
 	paneRun.render(ui.pane, { sessionId: "s1" }); await settle();
-	collectNodes(pane, "ld-frow")[1].props.onClick();
+	collectNodes(paneRun.render(ui.pane, { sessionId: "s1" }), "ld-fileshead")[0].props.onClick();
+	collectNodes(paneRun.render(ui.pane, { sessionId: "s1" }), "ld-frow")[1].props.onClick();
 	pane = paneRun.render(ui.pane, { sessionId: "s1" });
 	const files = collectNodes(pane, "ld-frow");
-	assert.equal(files.length, 2, "both files are listed");
-	assert.equal(files.filter((b) => b.props["aria-selected"] === true).length, 1, "one file is selected");
-	assert.match(textOf(files[1]), /b\.js/);
+	assert.equal(files.length, 0, "choosing a file folds the index again");
+	assert.match(textOf(pane), /b\.js/, "the chosen file is what the editor shows");
 	collectNodes(pane, "ld-segbtn").find((b) => textOf(b) === "Side by side").props.onClick();
 	pane = paneRun.render(ui.pane, { sessionId: "s1" });
 	assert.match(textOf(pane), /was here/);
@@ -785,9 +790,13 @@ test("mixed call hydration renders only exact visible list identities while inli
  const net={...record,id:"checkpoint:1:a",callId:"checkpoint:1",path:"a",turn:1};
  const ui=await setupHooks(async(_c,endpoint,payload)=>({ok:true,value:{records:endpoint==="detail" ? payload.callId==="c1"?[covered,secret]:[net] : [{...secret,hunks:undefined},{...net,hunks:undefined}]}}));
  ui.render(ui.pane,{sessionId:"s1"});await settle();const view=ui.render(ui.pane,{sessionId:"s1"});
- assert.equal(collectNodes(view,"ld-frow").length,2);
- assert.equal(findButton(view,"ld-frow").props["aria-selected"],true);
- assert.doesNotMatch(textOf(view),/hidden-original/);assert.doesNotMatch(textOf(view),/secret/);ui.dispose();
+ assert.equal(collectNodes(view,"ld-frow").length,0,"the index is folded by default");
+ assert.doesNotMatch(textOf(view),/hidden-original/);assert.doesNotMatch(textOf(view),/secret/);
+ findButton(view,"ld-fileshead").props.onClick();
+ const opened=ui.render(ui.pane,{sessionId:"s1"});
+ assert.equal(collectNodes(opened,"ld-frow").length,2);
+ assert.equal(findButton(opened,"ld-frow").props["aria-selected"],true);
+ assert.doesNotMatch(textOf(opened),/hidden-original/);assert.doesNotMatch(textOf(opened),/secret/);ui.dispose();
 });
 test("numeric historical footer carries the same bounded window into review and Keep",async()=>{
  const requests=[];const old={...record,time:150};

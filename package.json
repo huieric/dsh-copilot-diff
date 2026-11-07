@@ -1,6 +1,6 @@
 {
   "name": "dsh-copilot-diff",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Copilot-style file review for DeepSeek Harness: inline per-edit diffs, whole-file Changes sidebar, shell write guard, Keep/Undo and persistent per-turn Restore Checkpoint.",
   "keywords": [
     "dsh",

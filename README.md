@@ -4,6 +4,8 @@
 
 一个 DeepSeek Harness Web 插件。文件工具保留逐调用 diff；新的逐轮工作区快照按磁盘实际变化识别 `sed`、Python `replace`、脚本及其它命令行修改，提供轮级净改动和持久化检查点。它不调用模型。快照范围和排除项会显示在检查点处；超出覆盖范围的文件不会假装可以恢复。
 
+**0.4.2 新交互**：轮末不再铺开一整列文件——改成和 `dsh-file-changes` 一样的紧凑 chip：`[修改] client.js +11 −1 查看修改`，一行放不下就自动换行，点徽标或文件名都可直接打开该文件的 diff。右侧 **Changes** 面板的文件索引默认收起，只留 `› 文件 7 · 当前文件` 一行；点 `›` 才展开，选中文件后又自动收起，把整块高度让给 diff——与 VS Code 里「Changes 列表按需展开」的手感一致。
+
 **0.4.0 新交互**：忠实于真实执行过程——思考、命令、编辑按原始顺序出现，编辑的 diff 就长在对应的工具调用行里（默认收起，点一下就地展开），不再在轮末把整轮改动重新罗列成一片文件列表。右侧 **Changes** 面板仍是文件列表 + 整文件 diff，但改为按行虚拟化：只渲染视口内的行，几千行的文件滚动也不再卡；同时把行高、左侧增删色条、选中条、图标按钮对齐到 VS Code 的密度。轮次头的 **Restore Checkpoint** 是低调文字链接：确认后把文件恢复到该轮开始前（包含之后轮次已记录修改），聊天记录保留。
 
 截图由 `tools/preview.mjs` 用本插件真实的组件 + 合成数据渲染出来（`node tools/preview.mjs > docs/preview.html`，浏览器直接打开即可交互），不包含任何真实会话内容。
@@ -14,7 +16,7 @@
 
 ![就地展开的 diff](docs/screenshots/inline.png)
 
-**Changes 面板**：左侧文件列表，右侧整文件 diff（行虚拟化）；可展开未改动区、切换并排、逐个改动导航。
+**Changes 面板**：文件索引默认收起，点击 `›` 展开、选中后自动收起；右侧整文件 diff（行虚拟化），可展开未改动区、切换并排、逐个改动导航。
 
 ![侧栏整文件审阅](docs/screenshots/expanded.png)
 
@@ -124,8 +126,8 @@ DSH_INSTALL=/path/to/node_modules/@deepseek-ai/dsh node tools/host-fs-smoke.mjs
 | --- | --- | --- |
 | 轮次内每处编辑 | `已编辑 src/rotator/slot_rotator.h  +2 −2`，下一行就是该文件的 diff | 行首 `>` 收起/展开；文件名或右侧图标 → Changes 定位 |
 | 未改动区域 | `⋯ 40 行未改动` | 展开完整上下文；再点收起 |
-| 轮末 | `4 个文件已修改  +13 −4` ＋ 逐文件列表 ＋ **保留 / 撤销** | 文件名 → Changes 该轮该文件 |
-| Changes 侧栏 | 文件列表 + 整文件 diff + 顶部统计/作用域 | 选文件、切模式、`1 of N` 导航、Mark as Reviewed、Keep/Undo |
+| 轮末 | `4 个文件已修改  +13 −4` ＋ `文件变更` chip 行（`[修改] client.js +11 −1 查看修改`）＋ **保留 / 撤销** | 徽标或文件名 → Changes 该轮该文件；`查看修改` 同样打开该文件 |
+| Changes 侧栏 | 默认 `› 文件 4 · slot_rotator.h` 一行；展开后才是文件列表 + 整文件 diff + 顶部统计/作用域 | 点 `›` 展开；选文件后列表自动收起；切模式、`1 of N` 导航、Mark as Reviewed、Keep/Undo |
 | 恢复检查点 | 轮次头 `↺ 恢复检查点` 文字链接 | 确认后恢复到该轮开始前 |
 
 三处都只在这一轮确实改过文件时出现；轮次未结束时只显示进行中的状态。
@@ -179,11 +181,12 @@ node tools/backfill.mjs --dry
 - 历史回填依赖会话日志里能拿到前后文本：`apply_patch` 只写补丁、`dshFileReview` 元数据又缺失时，这条调用补不出来。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- 本分支为 `0.4.1` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
+- 本分支为 `0.4.2` 开发版本。仓库中的版本号不代表已发布 npm；请使用本地安装或本次交付的 npm 包。
 
 ## 变更记录
 
-- `0.4.1`（本分支）— 命令行改写保护：`tools/pre-execute` 在 bash 真正执行前检查命令，命中静默改文件模式时直接拒绝并给出改用文件工具的提示；默认开启，`DSH_COPILOT_DIFF_GUARD=off` 可关闭。Changes 面板的 Mark as Reviewed 现在会自动跳到下一个未审阅文件，标题旁显示 `已审阅/总数`。
+- `0.4.2`（本分支）— 复用 `dsh-file-changes` 的轮末形态：逐文件列表改成紧凑 chip（`[修改] 文件名 +A −R 查看修改`），窄栏自动换行；Changes 面板的文件索引默认收起，标题行改为 `› 文件 N · 当前文件 +A −R` 的一键展开控件，选中文件后自动收起，把高度留给 diff。
+- `0.4.1` — 命令行改写保护：`tools/pre-execute` 在 bash 真正执行前检查命令，命中静默改文件模式时直接拒绝并给出改用文件工具的提示；默认开启，`DSH_COPILOT_DIFF_GUARD=off` 可关闭。Changes 面板的 Mark as Reviewed 现在会自动跳到下一个未审阅文件，标题旁显示 `已审阅/总数`。
 - `0.4.0`— 忠实执行顺序与滚动性能：去掉“展开轮次后平铺整轮文件列表”的汇总视图，编辑重新出现在各自的 `tool.call` 位置（`tool.call.toolview`），轮次头只保留完成状态、`+A −R` 与 Restore Checkpoint；整文件 diff 改为固定 22px 行高的窗口化渲染（>240 行启用），`fullRows` 结果按输入缓存、滚动用 rAF 节流，`1 of N` 跳转走 `navRef` 直接定位；Changes 面板加增删色条、40px 行号槽、26px 文件行、↑/↓ 切文件与“在编辑器中打开”；`str_replace_editor` 计入就地 diff；preview/smoke 支持虚拟滚动断言。
 - `0.3.0` — 对齐 Copilot Chat 的审阅 UI：展开轮次后每个编辑行就地显示 diff；整文件上下文（未改动区可展开）；右侧 Changes 面板重做为文件列表 + 整文件 diff 编辑器（Inline／Side by side、`1 of N` 导航、Mark as Reviewed、复制、按文件 Keep/Undo）；Restore Checkpoint 改为低调文字链接；新增 `file-text` RPC 与 4 MiB 上限；新建/删除文件也能渲染完整正文。
 
