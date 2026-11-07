@@ -390,6 +390,7 @@ function buildPage(bundleCss) {
 	var Row = findBySlot("tool.call.toolview/edit");
 	var Pane = findBySlot("sidebar.right.pane.tab");
 	var Badge = findBySlot("sidebar.workspaces.session.row.action");
+	var Hover = findBySlot("sidebar.session.row.hover");
 	var Process = findBySlot("conversation.chat.node/turn-process");
 	var Footer = findBySlot("conversation.chat.turnTail/dsh-copilot-diff");
 	var Boundary = findBySlot("conversation.chat.turnTail/dsh-copilot-diff-boundary");
@@ -402,7 +403,8 @@ function buildPage(bundleCss) {
 			createElement("div", { className: "pv-meta" },
 				Badge === undefined ? null : createElement(Badge, { sessionId: session.id, t: t }),
 				createElement("span", { className: "pv-ago" }, session.rel)
-			)
+			),
+			Hover === undefined || session.id !== "s1" ? null : createElement("div", { className: "pv-hover" }, createElement(Hover, { sessionId: session.id, t: t }))
 		);
 	});
 

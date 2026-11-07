@@ -804,6 +804,16 @@ test("all changes hydrate summary bodies and stale replies cannot leak across se
 	ui.dispose();
 });
 
+test("diff totals stay coloured outside the pane, where the container variables are absent", () => {
+	// The sidebar badge and its hover card render outside .ld-turn/.ld-pane, so a
+	// bare `var(--ld-add)` resolved to nothing there and the numbers inherited the
+	// label colour. Both classes must carry the full fallback chain themselves.
+	assert.match(source, /\.ld-add \{ color: var\(--ld-add, var\(--dsw-alias-state-success-primary, #3fb950\)\)/);
+	assert.match(source, /\.ld-del \{ color: var\(--ld-del, var\(--dsw-alias-state-error-primary, #f85149\)\)/);
+	assert.doesNotMatch(source, /\.ld-add \{ color: var\(--ld-add\);/, "no bare variable reference remains");
+	assert.match(source, /\.ld-sidebadge, \.ld-sidehover \{[\s\S]{0,240}--ld-add:/, "the sidebar badge and hover card declare the variables themselves");
+});
+
 test("checkpoint prefix is unavailable historically and requires explicit files-only confirmation", async () => {
 	const requests = [];
 	const ui = await setupHooks(async (_channel, endpoint, payload) => { requests.push({ endpoint, payload }); return { ok: true, value: { records: [{ ...record, turn: 3, time: 5 }] } }; });
