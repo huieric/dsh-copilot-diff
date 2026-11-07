@@ -15,7 +15,7 @@ try {
 	await page.waitForLoadState('networkidle');
 
 	// Open the pane from the turn's compact chip row; the index starts folded.
-	await page.locator('.ld-fileitem').first().click();
+	await page.locator('.ld-turnrow').first().click();
 	await page.locator('.ld-pane .ld-editorbody .ld-text').first().waitFor();
 	await page.screenshot({ path: 'docs/screenshots/overview.png', fullPage: true });
 

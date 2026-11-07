@@ -18,7 +18,7 @@ try {
   await page.waitForLoadState('networkidle');
 
   // Footer file selection scopes the pane to this turn, like Copilot's request row.
-  await page.locator('.ld-fileitem').first().click();
+  await page.locator('.ld-turnrow').first().click();
   // Changes view: the file index starts folded; open it, then pick a file and
   // watch it fold away again so the diff owns the pane.
   assert.equal(await page.locator('.ld-frow').count(), 0, 'the file index must start folded');

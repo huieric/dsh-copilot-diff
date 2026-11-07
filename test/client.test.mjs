@@ -483,11 +483,12 @@ test("the expanded turn leaves the real steps in place and the footer lists the 
 	).component;
 	queue = [0, { key: "s1", value: payload }, false, null];
 	const footer = Footer({ turn, sessionId: "s1", t });
-	const items = collectNodes(footer, "ld-fileitem");
+	const items = collectNodes(footer, "ld-turnrow");
 	assert.equal(items.length, 1, "the footer lists the changed files");
 	assert.match(textOf(items[0]), /a\.js/);
-	assert.match(textOf(footer), /\+4/, "the chip carries the line stats");
-	assert.equal(collectNodes(footer, "ld-fchip").length, 1, "each file is one compact chip");
+	assert.match(textOf(footer), /\+4/, "the row carries the line stats");
+	assert.match(textOf(footer), /Edited 1 file/, "the header counts the files");
+	assert.equal(collectNodes(footer, "ld-fchip").length, 0, "each file is one row, not a compact chip");
 });
 
 test("the whole-file diff folds untouched context and reveals it on demand", async () => {
@@ -602,12 +603,13 @@ test("the turn footer keeps the change count and both actions", async () => {
 	queue = [0, { key: "s1", value: { records: [insideTurn] } }, false, null];
 	const footer = Footer({ turn, sessionId: "s1", t });
 	const text = textOf(footer);
-	assert.match(text, /1 files changed/, "the bar counts distinct files");
+	assert.match(text, /Edited 1 file/, "the card counts distinct files");
 	assert.match(text, /\+1/);
 	assert.match(text, /−1/);
 	assert.doesNotMatch(text, /Completed/, "the completed line lives on the turn header, not here");
-	assert.ok(findButton(footer, "ld-turnbar"), "the keep/undo bar is present");
-	assert.ok(findButton(footer, "ld-btn"), "Keep and Undo are buttons");
+	assert.ok(findButton(footer, "ld-turnhead"), "the card header is present");
+	assert.ok(findButton(footer, "ld-turnbtn"), "Keep and Undo are buttons");
+	assert.ok(findButton(footer, "ld-turnbtn-strong"), "Review sits in the header too");
 
 	queue = [0, { key: "s1", value: { records: [] } }, false, null];
 	const other = Footer({ turn: { start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
@@ -654,8 +656,8 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 	const turn = { turn: 7, start: { time: 1000, data: { turn: 7 } }, end: { time: 2000 } };
 	ui.render(ui.footer, { turn, sessionId: "s1" }); await settle();
 	const foot = ui.render(ui.footer, { turn, sessionId: "s1" });
-	assert.equal(collectNodes(foot, "ld-fileitem").length, 2, "numeric turn wins over timestamps");
-	findButton(foot, "ld-fileitem").props.onClick();
+	assert.equal(collectNodes(foot, "ld-turnrow").length, 2, "numeric turn wins over timestamps");
+	findButton(foot, "ld-turnrow").props.onClick();
 	assert.equal(ui.openedTabs.length, 1);
 	// Mount pane in another runner to give it independent hooks.
 	const paneRun = hookRunner();
@@ -680,6 +682,23 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 	assert.match(textOf(pane), /now here/);
 	assert.match(textOf(pane), /1 of 1/);
 	paneRun.dispose(); ui.dispose();
+});
+
+test("the footer card folds past six files behind one row", async () => {
+	const records = Array.from({ length: 9 }, (_, index) => ({ ...record, id: `e${index}`, callId: `c${index}`, path: `/work/f${index}.js`, turn: 7 }));
+	const payload = { root: "/work", records, checkpoints: [], totals: { edits: 9 } };
+	const ui = await setupHooks(async () => ({ ok: true, value: payload }));
+	const turn = { turn: 7, start: { time: 1000, data: { turn: 7 } }, end: { time: 2000 } };
+	ui.render(ui.footer, { turn, sessionId: "s1" }); await settle();
+	const folded = ui.render(ui.footer, { turn, sessionId: "s1" });
+	assert.equal(collectNodes(folded, "ld-turnrow").length, 6, "six rows before the fold");
+	const more = findButton(folded, "ld-turnmore");
+	assert.match(textOf(more), /3 more files/);
+	more.props.onClick();
+	const opened = ui.render(ui.footer, { turn, sessionId: "s1" });
+	assert.equal(collectNodes(opened, "ld-turnrow").length, 9, "the fold reveals the rest");
+	assert.equal(findButton(opened, "ld-turnmore"), undefined, "the fold button disappears once open");
+	ui.dispose();
 });
 
 test("all changes hydrate summary bodies and stale replies cannot leak across sessions", async () => {
@@ -803,7 +822,7 @@ test("numeric historical footer carries the same bounded window into review and 
  const ui=await setupHooks(async(_c,endpoint,payload)=>{requests.push({endpoint,payload});return {ok:true,value:{records:[old]}};});
  const props={sessionId:"s1",turn:{turn:1,start:{time:100,data:{turn:1}},end:{time:200}}};
  ui.render(ui.footer,props);await settle();const footer=ui.render(ui.footer,props);
- findButton(footer,"ld-fileitem").props.onClick();
+ findButton(footer,"ld-turnrow").props.onClick();
  const run=hookRunner();Object.assign(ui.hooks,run.hooks);run.render(ui.pane,{sessionId:"s1"});await settle();
  const pane=run.render(ui.pane,{sessionId:"s1"});assert.match(textOf(pane),/was here/);
  const request=requests.find(r=>r.endpoint==="review-turn");assert.deepEqual(request.payload,{sessionId:"s1",turn:1,from:100,to:200,callId:undefined});
