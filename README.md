@@ -4,6 +4,8 @@
 
 一个 DeepSeek Harness Web 插件。文件工具保留逐调用 diff；新的逐轮工作区快照按磁盘实际变化识别 `sed`、Python `replace`、脚本及其它命令行修改，提供轮级净改动和持久化检查点。它不调用模型。快照范围和排除项会显示在检查点处；超出覆盖范围的文件不会假装可以恢复。
 
+**0.8.3 修正**：装到 0.2.2-rc.1 上会整个插件加载失败（启动浮层 `Failed to load plugins`）——`tool.call.toolview` 的 9 个 key 和 `conversation.chat.node` 的 `turn-process` 都按默认 `priority: 0` 注册，而宿主自带的 `file-mutation-toolview` / `tk` 已经以 0 占了同一批 key，keyed 槽位不允许同 priority 重复，于是 `apply()` 抛错、fiber 变 `failed`。现在这两处都改成 `priority: -1`（规则是 lowest renders，-1 才是「悄悄替换宿主那一行」的意思）。同一版还修了两处观感：**一轮只留一张文件卡**（卡片归宿主 `@deepseek-ai/dsh-client-ui-deliverables`，我们不再画自己那张，**保留**/**撤销** 仍在右侧审阅面板里），以及**边界行挪到图标行下面**（`恢复检查点` / `分叉` 原来挤在卡片与 `Turn cost` 之间，现在排到 `Usage … 02:09` 那一行的下一行）。
+
 **0.8.2 修正**：侧栏会话行与它悬停卡里的 `+A −R` 之前是灰的——这两处在我们自己的面板容器之外，`var(--ld-add)` 取不到值，颜色就退回继承色。现在 `.ld-add` / `.ld-del` 自带完整回退链（`--ld-add` → 宿主 `--dsw-alias-state-success-primary` → 字面色），并在这两个容器上直接声明变量，所以任何位置的 `+A −R` 都是绿／红。
 
 **0.8.1 新交互**：轮间边界行（`恢复检查点` / `分叉`）不再挂在文件卡里，而是**单独一行摆在两轮之间**：水平居中、只有 28px 高，默认完全透明，鼠标移到这条缝上才淡入；整轮没有文件改动时文件卡不出现，这一行照样在。
@@ -202,10 +204,11 @@ node tools/backfill.mjs --dry
 - 历史回填依赖会话日志里能拿到前后文本：`apply_patch` 只写补丁、`dshFileReview` 元数据又缺失时，这条调用补不出来。
 - 撤销是「整条记录」粒度的；一次 `apply_patch` 里同一文件的多次改动会合成一条记录。
 - 记录随 session 走；跨 session 的同一文件改动不会合并计数。
-- `0.8.2` 已发布到 npm：`npm i dsh-copilot-diff`。`main` 与 npm 上的版本同源；开发分支仍是 `feat/copilot-review-checkpoints`。
+- `0.8.3` 已发布到 npm：`npm i dsh-copilot-diff`。`main` 与 npm 上的版本同源；开发分支仍是 `feat/copilot-review-checkpoints`。
 
 ## 变更记录
 
+- `0.8.3`（已发布）— 加载修复与单卡：`tool.call.toolview` 的 9 个 key、`conversation.chat.node` 的 `turn-process` 改在 `priority: -1` 注册（宿主内置项已占 0，同 priority 重复 key 会让 keyed 槽位抛错，`apply()` 中断后整个插件显示为加载失败）；轮末不再画自己的文件卡，只保留宿主那张，并删掉随之无用的 `TurnFooter`、`TURN_CARD_ROWS`、卡片专属 CSS 与 10 个 `turn.*` 文案（`bar.keep` / `bar.undo` 仍被面板使用）；边界行加 `order: 1`，排到轮末 copy/usage 图标行的下一行——宿主把 turnTail 槽与图标行放在同一个 flex 列里、图标行永远是最后一个子元素，槽位 order 挪不动它，只有行自身的 flex order 可以（仅视觉顺序，tab 顺序仍按 DOM）。
 - `0.8.2`（已发布）— diff 数字上色修复：侧栏会话行徽标与会话悬停卡里的 `+A −R` 位于审阅面板／轮末卡片之外，原先 `var(--ld-add)` 无值而退回灰色；`.ld-add` / `.ld-del` 改为带完整回退链（容器变量 → 宿主 success/error 变量 → 字面色），并给 `.ld-sidebadge` / `.ld-sidehover` 直接声明这两个变量。Fixture 实测两处均为 `rgb(74,222,128)` / `rgb(248,113,113)`，并加了静态断言防止退回裸变量。
 - `0.8.1` — 边界行独立成行：`恢复检查点` 与 `分叉` 从文件卡底部移到两轮之间的独立一行（沿用同一个 `conversation.chat.turnTail` 槽的第二个注册项，order 1，排在卡片之后），水平居中、撑满聊天列、高 28px；默认 `opacity: 0` 不可见，鼠标移入或键盘聚焦才淡入，不再和文件卡绑在一起。整轮没有文件改动时不再借空卡片承载这一行——卡片直接不渲染，边界行照常出现。
 - `0.8.0` — 审阅面板平铺 + 轮间边界行：Changes 面板不再有文件索引与单文件编辑器，整轮所有文件按段平铺成一列（段头吸顶、段内就地 diff、未改动区收成 `⋯ N 行未改动` 横条），`统一／并排`、`展开未改动` 对所有段同时生效；`恢复检查点` 从完成行移到两轮之间的边界行，旁边新增 **分叉**（在整轮末的 seq 上 `session/fork` 开新会话并切过去）。轮的步数来自 `turn.steps.length`，边界行在整轮没有任何文件改动时也会渲染。
