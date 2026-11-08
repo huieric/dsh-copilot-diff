@@ -194,7 +194,7 @@ test("the bundle registers one module and exports apply + inject", () => {
 	assert.ok(Array.isArray(exported.inject));
 });
 
-test("apply wires rows, the turn footer, the review panel, session badges and styles", async () => {
+test("apply wires rows, the turn boundary, the review panel, session badges and styles", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
 
@@ -226,16 +226,11 @@ test("apply wires rows, the turn footer, the review panel, session badges and st
 		assert.equal(entry.spec.inject("s-1").liveDiffSessionId, "s-1");
 	}
 
-	const foot = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
-	assert.equal(foot.length, 2, "the card and the gap row share the turn tail slot");
-	const card = foot.find((entry) => entry.spec.id === "dsh-copilot-diff");
-	const gap = foot.find((entry) => entry.spec.id === "dsh-copilot-diff-boundary");
-	assert.ok(card, "the card keeps its own registration");
-	assert.ok(gap, "the gap row has its own registration");
-	assert.equal(card.spec.order, -1);
-	assert.equal(gap.spec.order, 1, "the gap row renders after the card");
-	assert.equal(card.spec.inject("s-1").sessionId, "s-1");
-	assert.equal(gap.spec.inject("s-1").sessionId, "s-1");
+	const tail = registrations.filter((entry) => entry.slot === "conversation.chat.turnTail");
+	assert.equal(tail.length, 1, "the card is the host's, so the tail slot carries only the gap row");
+	assert.equal(tail[0].spec.id, "dsh-copilot-diff-boundary");
+	assert.equal(tail[0].spec.order, 1, "the gap row renders after the host card");
+	assert.equal(tail[0].spec.inject("s-1").sessionId, "s-1");
 
 	const diffOn = registrations.filter((entry) => entry.slot === "sidebar.right.pane.tab");
 	assert.equal(diffOn.length, 1);
@@ -259,6 +254,31 @@ test("apply wires rows, the turn footer, the review panel, session badges and st
 	assert.ok(dictionaries["copilot-diff"]?.zh?.["bar.files"], "zh dictionary registered");
 	assert.ok(dictionaries["copilot-diff"]?.en?.["panel.title"], "en dictionary registered");
 	assert.ok(exported.inject.includes("sidebarRightTabs"));
+});
+
+test("keyed rows and the completed line register below the host's priority", async () => {
+	const definition = loadBundle();
+	const exported = definition.factory(() => react);
+	const { ctx, registrations } = makeClientCtx();
+	globalThis.document = {
+		head: { appendChild: (tag) => void tag },
+		querySelector: () => null,
+		createElement: () => ({ dataset: {}, textContent: "" })
+	};
+	await exported.apply(ctx);
+	delete globalThis.document;
+
+	// The host already owns these keys at priority 0, and a keyed slot refuses a second
+	// entry at the same priority, so the replacement only lands from a lower priority.
+	const rows = registrations.filter((entry) => entry.slot === "tool.call.toolview");
+	assert.ok(rows.length > 0, "the tool rows are registered");
+	for (const entry of rows) assert.equal(entry.spec.priority, -1, `key ${entry.spec.key}`);
+
+	const node = registrations.find(
+		(entry) => entry.slot === "conversation.chat.node" && entry.spec.key === "turn-process"
+	);
+	assert.ok(node, "the completed line is registered");
+	assert.equal(node.spec.priority, -1);
 });
 
 test("a click on a host file row's numbers opens that change in the review panel", async () => {
@@ -519,7 +539,7 @@ test("the turn header carries this turn's totals on the completed line", async (
 	assert.doesNotMatch(textOf(empty), /\+\d/, "a turn that changed nothing shows no totals");
 });
 
-test("the expanded turn leaves the real steps in place and the footer lists the files", async () => {
+test("the expanded turn leaves the real steps in place and lists no files of its own", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
 	const { ctx, registrations } = makeClientCtx();
@@ -555,18 +575,6 @@ test("the expanded turn leaves the real steps in place and the footer lists the 
 	assert.equal(findComponent(view, "TurnEditRow"), undefined);
 	assert.equal(collectNodes(view, "ld-process").length, 1, "the completed line is still ours");
 	assert.match(textOf(view), /\+4/);
-
-	const Footer = registrations.find(
-		(entry) => entry.slot === "conversation.chat.turnTail" && entry.spec.id === "dsh-copilot-diff"
-	).component;
-	queue = [0, { key: "s1", value: payload }, false, null];
-	const footer = Footer({ turn, sessionId: "s1", t });
-	const items = collectNodes(footer, "ld-turnrow");
-	assert.equal(items.length, 1, "the footer lists the changed files");
-	assert.match(textOf(items[0]), /a\.js/);
-	assert.match(textOf(footer), /\+4/, "the row carries the line stats");
-	assert.match(textOf(footer), /Edited 1 file/, "the header counts the files");
-	assert.equal(collectNodes(footer, "ld-fchip").length, 0, "each file is one row, not a compact chip");
 });
 
 test("the whole-file diff folds untouched context and reveals it on demand", async () => {
@@ -661,10 +669,10 @@ test("the turn header speaks Chinese when the dictionary is bound", async () => 
 	assert.match(textOf(view), /已完成，用时 1分5秒/);
 });
 
-test("the turn footer keeps the change count and both actions", async () => {
+test("the completed line keeps the change stats badge, and a change-free turn shows none", async () => {
 	const definition = loadBundle();
 	const exported = definition.factory(() => react);
-	const { ctx, registrations } = makeClientCtx();
+	const { ctx, registrations, openedTabs } = makeClientCtx();
 	globalThis.document = {
 		head: { appendChild: () => {} },
 		querySelector: () => null,
@@ -673,26 +681,31 @@ test("the turn footer keeps the change count and both actions", async () => {
 	await exported.apply(ctx);
 	delete globalThis.document;
 
-	const Footer = registrations.find((entry) => entry.slot === "conversation.chat.turnTail").component;
-	const turn = { start: { time: 1000 }, end: { time: 1000 + 65_000 }, steps: [{}, {}, {}] };
-	const insideTurn = { ...record, time: 30_000 };
+	const Node = registrations.find(
+		(entry) => entry.slot === "conversation.chat.node" && entry.spec.key === "turn-process"
+	).component;
 	const t = (key, fallback) => fallback ?? key;
+	const build = (turn) => ({
+		node: { location: { kind: "turn", turn } },
+		turnProcess: { foldable: false, hasContent: true, open: true, setOpen: () => {} },
+		sessionId: "s1",
+		t
+	});
 
-	// useRevision, data, busy, notice
-	queue = [0, { key: "s1", value: { records: [insideTurn] } }, false, null];
-	const footer = Footer({ turn, sessionId: "s1", t });
-	const text = textOf(footer);
-	assert.match(text, /Edited 1 file/, "the card counts distinct files");
-	assert.match(text, /\+1/);
-	assert.match(text, /−1/);
-	assert.doesNotMatch(text, /Completed/, "the completed line lives on the turn header, not here");
-	assert.ok(findButton(footer, "ld-turnhead"), "the card header is present");
-	assert.ok(findButton(footer, "ld-turnbtn"), "Keep and Undo are buttons");
-	assert.ok(findButton(footer, "ld-turnbtn-strong"), "Review sits in the header too");
+	const turn = { status: "closed", turn: 3, start: { time: 1000, data: { turn: 3 } }, end: { time: 1000 + 65_000, data: { reason: { kind: "completed" } } }, steps: [{}, {}, {}] };
+	queue = [{ key: "s1", value: { records: [{ ...record, time: 30_000, turn: 3 }] } }];
+	const view = Node(build(turn));
+	assert.equal(collectNodes(view, "ld-turnrow").length, 0, "the plugin lists no files on the turn, because the card is the host's");
+	const badge = findButton(view, "ld-processbadge");
+	assert.ok(badge, "the stats badge is the way into the panel");
+	assert.match(textOf(badge), /\+1/);
+	assert.match(textOf(badge), /−1/);
+	badge.props.onClick({ stopPropagation: () => {} });
+	assert.equal(openedTabs.length, 1, "the badge opens the review panel");
 
-	queue = [0, { key: "s1", value: { records: [] } }, false, null];
-	const other = Footer({ turn: { status: "closed", start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }, sessionId: "s1", t });
-	assert.equal(other, null, "a turn that changed nothing renders no card at all");
+	queue = [{ key: "s1", value: { records: [] } }];
+	const quiet = Node(build({ status: "closed", turn: 4, start: { time: 90_000 }, end: { time: 95_000 }, steps: [] }));
+	assert.equal(findButton(quiet, "ld-processbadge"), undefined, "a turn that changed nothing offers no badge");
 });
 
 /** A small hook runner executes effects and re-renders the actual registered component. */
@@ -722,10 +735,10 @@ async function setupHooks(rpc, options = {}) {
 	const services = makeClientCtx({ rpc, ...options });
 	await exported.apply(services.ctx);
 	const tail = (id) => services.registrations.find((entry) => entry.slot === "conversation.chat.turnTail" && entry.spec.id === id).component;
-	return { ...runner, ...services, pane: services.registrations.find((entry) => entry.slot === "sidebar.right.pane.tab").component, footer: tail("dsh-copilot-diff"), boundary: tail("dsh-copilot-diff-boundary") };
+	return { ...runner, ...services, pane: services.registrations.find((entry) => entry.slot === "sidebar.right.pane.tab").component, boundary: tail("dsh-copilot-diff-boundary") };
 }
 
-test("footer file opens numeric turn scope, loads full hunks, navigates and scopes actions", async () => {
+test("the badge on the completed line opens the numeric turn scope, loads full hunks, navigates and scopes actions", async () => {
 	const requests = [];
 	const records = [{ ...record, turn: 7, time: 999999 }, { ...record, id: "e2", path: "/work/b.js", turn: 7 }];
 	const payload = { root: "/work", records, checkpoints: [], totals: { edits: 2 } };
@@ -733,11 +746,18 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 		requests.push({ endpoint, payload: payloadArg });
 		return { ok: true, value: payload };
 	});
-	const turn = { turn: 7, start: { time: 1000, data: { turn: 7 } }, end: { time: 2000 } };
-	ui.render(ui.footer, { turn, sessionId: "s1" }); await settle();
-	const foot = ui.render(ui.footer, { turn, sessionId: "s1" });
-	assert.equal(collectNodes(foot, "ld-turnrow").length, 2, "numeric turn wins over timestamps");
-	findButton(foot, "ld-turnrow").props.onClick();
+	const turn = { status: "closed", turn: 7, start: { time: 1000, data: { turn: 7 } }, end: { time: 2000 }, steps: [{}, {}] };
+	const nodeProps = {
+		node: { location: { kind: "turn", turn } },
+		turnProcess: { foldable: false, hasContent: true, open: true, setOpen: () => {} },
+		sessionId: "s1",
+		t: (key, fallback) => fallback ?? key
+	};
+	const Node = ui.registrations.find((entry) => entry.slot === "conversation.chat.node" && entry.spec.key === "turn-process").component;
+	ui.render(Node, nodeProps); await settle();
+	const head = ui.render(Node, nodeProps);
+	assert.equal(collectNodes(head, "ld-turnrow").length, 0, "the plugin draws no card of its own on the turn");
+	findButton(head, "ld-processbadge").props.onClick({ stopPropagation: () => {} });
 	assert.equal(ui.openedTabs.length, 1);
 	// Mount pane in another runner to give it independent hooks.
 	const paneRun = hookRunner();
@@ -758,23 +778,6 @@ test("footer file opens numeric turn scope, loads full hunks, navigates and scop
 	assert.match(textOf(pane), /was here/);
 	assert.match(textOf(pane), /now here/);
 	paneRun.dispose(); ui.dispose();
-});
-
-test("the footer card folds past six files behind one row", async () => {
-	const records = Array.from({ length: 9 }, (_, index) => ({ ...record, id: `e${index}`, callId: `c${index}`, path: `/work/f${index}.js`, turn: 7 }));
-	const payload = { root: "/work", records, checkpoints: [], totals: { edits: 9 } };
-	const ui = await setupHooks(async () => ({ ok: true, value: payload }));
-	const turn = { turn: 7, start: { time: 1000, data: { turn: 7 } }, end: { time: 2000 } };
-	ui.render(ui.footer, { turn, sessionId: "s1" }); await settle();
-	const folded = ui.render(ui.footer, { turn, sessionId: "s1" });
-	assert.equal(collectNodes(folded, "ld-turnrow").length, 6, "six rows before the fold");
-	const more = findButton(folded, "ld-turnmore");
-	assert.match(textOf(more), /3 more files/);
-	more.props.onClick();
-	const opened = ui.render(ui.footer, { turn, sessionId: "s1" });
-	assert.equal(collectNodes(opened, "ld-turnrow").length, 9, "the fold reveals the rest");
-	assert.equal(findButton(opened, "ld-turnmore"), undefined, "the fold button disappears once open");
-	ui.dispose();
 });
 
 test("all changes hydrate summary bodies and stale replies cannot leak across sessions", async () => {
@@ -805,13 +808,21 @@ test("all changes hydrate summary bodies and stale replies cannot leak across se
 });
 
 test("diff totals stay coloured outside the pane, where the container variables are absent", () => {
-	// The sidebar badge and its hover card render outside .ld-turn/.ld-pane, so a
+	// The sidebar badge and its hover card render outside .ld-process/.ld-pane, so a
 	// bare `var(--ld-add)` resolved to nothing there and the numbers inherited the
 	// label colour. Both classes must carry the full fallback chain themselves.
 	assert.match(source, /\.ld-add \{ color: var\(--ld-add, var\(--dsw-alias-state-success-primary, #3fb950\)\)/);
 	assert.match(source, /\.ld-del \{ color: var\(--ld-del, var\(--dsw-alias-state-error-primary, #f85149\)\)/);
 	assert.doesNotMatch(source, /\.ld-add \{ color: var\(--ld-add\);/, "no bare variable reference remains");
 	assert.match(source, /\.ld-sidebadge, \.ld-sidehover \{[\s\S]{0,240}--ld-add:/, "the sidebar badge and hover card declare the variables themselves");
+});
+
+test("the boundary row takes part in the tail's flex column, so it lands after the icon line", () => {
+	// The host renders the turn tail as one flex column: the slot rows first, then the
+	// copy/usage icon line as its last child, whatever order a slot entry registers at.
+	// A slot order therefore cannot put our row below that line; only the row's own flex
+	// order can, which is why the rule has to carry it.
+	assert.match(source, /\.ld-turnboundary \{ order: 1;/, "the boundary row declares its own flex order");
 });
 
 test("checkpoint prefix is unavailable historically and requires explicit files-only confirmation", async () => {
@@ -960,12 +971,14 @@ test("mixed call hydration renders only exact visible list identities while inli
  assert.equal(collectNodes(view,"ld-frow").length,0,"the old file index is gone");
  ui.dispose();
 });
-test("numeric historical footer carries the same bounded window into review and Keep",async()=>{
+test("numeric historical turn carries the same bounded window from the badge into review and Keep",async()=>{
  const requests=[];const old={...record,time:150};
  const ui=await setupHooks(async(_c,endpoint,payload)=>{requests.push({endpoint,payload});return {ok:true,value:{records:[old]}};});
- const props={sessionId:"s1",turn:{turn:1,start:{time:100,data:{turn:1}},end:{time:200}}};
- ui.render(ui.footer,props);await settle();const footer=ui.render(ui.footer,props);
- findButton(footer,"ld-turnrow").props.onClick();
+ const turn={status:"closed",turn:1,start:{time:100,data:{turn:1}},end:{time:200}};
+ const Node=ui.registrations.find(e=>e.slot==="conversation.chat.node"&&e.spec.key==="turn-process").component;
+ const nodeProps={node:{location:{kind:"turn",turn}},turnProcess:{foldable:false,hasContent:true,open:true,setOpen:()=>{}},sessionId:"s1",t:(_k,f)=>f};
+ ui.render(Node,nodeProps);await settle();const head=ui.render(Node,nodeProps);
+ findButton(head,"ld-processbadge").props.onClick({stopPropagation(){}});
  const run=hookRunner();Object.assign(ui.hooks,run.hooks);run.render(ui.pane,{sessionId:"s1"});await settle();
  const pane=run.render(ui.pane,{sessionId:"s1"});assert.match(textOf(pane),/was here/);
  const request=requests.find(r=>r.endpoint==="review-turn");assert.deepEqual(request.payload,{sessionId:"s1",turn:1,from:100,to:200,callId:undefined});
